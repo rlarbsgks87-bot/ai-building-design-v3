@@ -12,6 +12,8 @@ class DataGoKrService:
     - 건축물대장정보: /BldRgstHubService (일일 10,000건)
     - 토지이용규제정보: /arLandUseInfoService (일일 1,000건)
     - 토지이용규제법령: /LuLawInfoService (일일 1,000건)
+
+    v2: 건축물대장에서 건폐율, 용적률 등 추가 정보 포함
     """
 
     BASE_URL = 'https://apis.data.go.kr/1613000'
