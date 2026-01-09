@@ -96,7 +96,7 @@ SIMPLE_JWT = {
 CORS_ALLOW_ALL_ORIGINS = True
 
 # External APIs
-VWORLD_API_KEY = os.environ.get('VWORLD_API_KEY', '739937A6-D680-3DE0-9D97-9D1187C5E6DA')
+VWORLD_API_KEY = os.environ.get('VWORLD_API_KEY', 'CEB52025-E065-364C-9DBA-44880E3B02B8')
 VWORLD_DOMAIN = os.environ.get('VWORLD_DOMAIN', '*')  # VWorld 등록 도메인 (* = 서버용)
 LAMBDA_PROXY_URL = os.environ.get('LAMBDA_PROXY_URL', 'https://3a9op0tcy6.execute-api.ap-northeast-2.amazonaws.com/prod/')
 DATAGO_API_KEY = os.environ.get('DATAGO_API_KEY', '')
