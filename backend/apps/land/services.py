@@ -1008,19 +1008,30 @@ class LandService:
             if not parcel_area or parcel_area == 0:
                 # 1. VWorld API 직접 호출 시도 (연속지적도 - 공시지가, 면적, 주소 포함)
                 vworld_data = self.vworld.get_land_characteristics(pnu)
-                if vworld_data.get('success') and vworld_data.get('area'):
-                    parcel_area = vworld_data.get('area') or 0
-                    jiga = vworld_data.get('jiga') or jiga
-                    use_zone = vworld_data.get('use_zone') or use_zone
-                    address_jibun = vworld_data.get('address') or ''
+                if vworld_data.get('success'):
+                    # area가 0이 아닌 경우에만 업데이트 (area > 0 체크)
+                    if vworld_data.get('area') and vworld_data.get('area') > 0:
+                        parcel_area = vworld_data.get('area')
+                    # jiga는 별도로 업데이트
+                    if vworld_data.get('jiga') and vworld_data.get('jiga') > 0:
+                        jiga = vworld_data.get('jiga')
+                    # 주소 업데이트
+                    if vworld_data.get('address'):
+                        address_jibun = vworld_data.get('address')
+                    # 용도지역 업데이트
+                    if vworld_data.get('use_zone'):
+                        use_zone = vworld_data.get('use_zone')
 
                 # 2. VWorld도 실패하면 공공데이터포털 API 시도
                 if not parcel_area or parcel_area == 0:
                     datago_data = self.datago.get_land_characteristics(pnu)
                     if datago_data.get('success'):
-                        parcel_area = datago_data.get('area') or 0
-                        jiga = datago_data.get('jiga') or jiga
-                        use_zone = datago_data.get('use_zone') or use_zone
+                        if datago_data.get('area') and datago_data.get('area') > 0:
+                            parcel_area = datago_data.get('area')
+                        if datago_data.get('jiga') and datago_data.get('jiga') > 0:
+                            jiga = datago_data.get('jiga') if not jiga else jiga
+                        if datago_data.get('use_zone') and not use_zone:
+                            use_zone = datago_data.get('use_zone')
 
             # 토지이용계획에서 용도지역 가져오기
             if not use_zone and land_use.get('success'):
