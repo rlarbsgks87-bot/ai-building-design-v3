@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { landApi } from '@/lib/api'
 
 declare global {
   interface Window { kakao: any }
@@ -657,7 +658,7 @@ export function KakaoMap({
         }
 
         // 일반 모드에서는 필지 정보 조회
-        geocoder.coord2Address(lng, lat, (result: any, status: any) => {
+        geocoder.coord2Address(lng, lat, async (result: any, status: any) => {
           if (status !== window.kakao.maps.services.Status.OK) return
 
           const addr = result[0].address
@@ -667,7 +668,22 @@ export function KakaoMap({
           const mainNo = (addr?.main_address_no || '').padStart(4, '0')
           const subNo = (addr?.sub_address_no || '0').padStart(4, '0')
 
-          const pnu = bCode + (mountainYn ? '1' : '0') + mainNo + subNo
+          let pnu = bCode + (mountainYn ? '1' : '0') + mainNo + subNo
+
+          // b_code가 없거나 PNU가 19자리가 아닌 경우 백엔드 검색 API로 보정
+          if (!bCode || pnu.length !== 19) {
+            try {
+              const searchResult = await landApi.search(jibunAddress)
+              if (searchResult.success && searchResult.data && searchResult.data.length > 0) {
+                const found = searchResult.data[0]
+                if (found.pnu && found.pnu.length === 19) {
+                  pnu = found.pnu
+                }
+              }
+            } catch (err) {
+              console.error('Failed to get PNU from backend:', err)
+            }
+          }
 
           onParcelClick?.({
             address_jibun: jibunAddress,
