@@ -573,6 +573,21 @@ function SearchPageContent() {
                             highlight
                           />
                           <InfoRow label="용도지역" value={detail?.use_zone || '-'} />
+                          {detail?.use_zones && detail.use_zones.length > 0 && (
+                            <div className="mt-3 pt-3 border-t border-gray-200">
+                              <p className="text-xs text-gray-500 mb-2">토지이용계획</p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {detail.use_zones.map((zone, zIdx) => (
+                                  <span
+                                    key={zIdx}
+                                    className="inline-block px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-md"
+                                  >
+                                    {zone.name}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                           <InfoRow
                             label="공시지가"
                             value={detail?.official_land_price ? `${detail.official_land_price.toLocaleString()}원/m²` : '-'}

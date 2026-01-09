@@ -867,12 +867,18 @@ class LandService:
             # 건축물대장 정보 조회
             building_info = self.datago.get_building_info(pnu)
 
+            # 토지이용계획 zones 가져오기
+            land_use_zones = []
+            if land_use.get('success'):
+                land_use_zones = land_use.get('zones', [])
+
             land_data = {
                 'pnu': pnu,
                 'address_jibun': '',
                 'address_road': '',
                 'parcel_area': parcel_area,
                 'use_zone': use_zone,
+                'use_zones': land_use_zones,  # 토지이용계획 전체 zones
                 'official_land_price': jiga,
                 'latitude': y,
                 'longitude': x,

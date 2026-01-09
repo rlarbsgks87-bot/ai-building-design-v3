@@ -77,12 +77,18 @@ export interface BuildingInfo {
   approval_date: string | null
 }
 
+export interface UseZone {
+  name: string
+  law?: string
+}
+
 export interface LandDetail {
   pnu: string
   address_jibun: string
   address_road: string
   parcel_area: number | null
   use_zone: string
+  use_zones?: UseZone[]
   official_land_price: number | null
   latitude: number
   longitude: number
