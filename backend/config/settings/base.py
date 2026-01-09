@@ -113,4 +113,5 @@ CACHE_TIMEOUTS = {
     'land_search': 1800,      # 30 minutes
     'regulation': 3600,       # 1 hour
     'address_search': 1800,   # 30 minutes
+    'rate_limit': 86400,      # 24 hours
 }
