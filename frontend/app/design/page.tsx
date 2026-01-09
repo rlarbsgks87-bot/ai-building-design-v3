@@ -86,6 +86,7 @@ interface LandInfo {
     width: number
     depth: number
   }
+  polygon?: [number, number][]  // [lng, lat][] 지적도 폴리곤 좌표
 }
 
 type TabType = 'config' | 'floors' | 'sunlight' | 'profit' | 'compare'
@@ -134,13 +135,18 @@ function DesignPageContent() {
           const regResponse = await landApi.getRegulation(pnu)
           const regulation = regResponse.success ? regResponse.data : null
 
-          // 필지 지오메트리 가져오기 (실제 가로/세로)
+          // 필지 지오메트리 가져오기 (실제 가로/세로 + 폴리곤 좌표)
           let dimensions: { width: number; depth: number } | undefined
+          let polygon: [number, number][] | undefined
           try {
             const geomResponse = await landApi.getGeometry(pnu)
             if (geomResponse.success && geomResponse.dimensions) {
               dimensions = geomResponse.dimensions
               console.log('Parcel geometry loaded:', dimensions)
+            }
+            if (geomResponse.success && geomResponse.geometry) {
+              polygon = geomResponse.geometry
+              console.log('Parcel polygon loaded:', polygon.length, 'points')
             }
           } catch (geomError) {
             console.warn('Failed to fetch parcel geometry, using square approximation:', geomError)
@@ -156,6 +162,7 @@ function DesignPageContent() {
             heightLimit: regulation?.height_limit ? parseInt(regulation.height_limit) : null,
             landPrice: detail.official_land_price || 0,
             dimensions: dimensions,
+            polygon: polygon,
           })
         }
       } catch (error) {
@@ -606,6 +613,7 @@ function DesignPageContent() {
             building={currentBuilding}
             landArea={landInfo.area}
             landDimensions={landInfo.dimensions}
+            landPolygon={landInfo.polygon}
             useZone={landInfo.useZone}
             showNorthSetback={true}
             floorSetbacks={currentFloorSetbacks}

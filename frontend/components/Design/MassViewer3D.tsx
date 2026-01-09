@@ -65,10 +65,42 @@ interface MassViewer3DProps {
   building: BuildingConfig
   landArea: number
   landDimensions?: { width: number; depth: number }  // VWorld에서 가져온 실제 필지 크기
+  landPolygon?: [number, number][]  // [lng, lat][] 지적도 폴리곤 좌표
   useZone?: string  // 용도지역 (주거지역인 경우 일조권 적용)
   showNorthSetback?: boolean  // 북쪽 일조권 표시 여부
   floorSetbacks?: number[]  // 층별 북측 이격거리 (계단형 매스용)
   address?: string  // 주소 (내보내기시 메타데이터용)
+}
+
+// WGS84 좌표를 로컬 미터 좌표로 변환 (폴리곤 중심 기준)
+function convertPolygonToLocal(polygon: [number, number][]): { points: [number, number][]; center: [number, number] } {
+  if (!polygon || polygon.length < 3) {
+    return { points: [], center: [0, 0] }
+  }
+
+  // 중심점 계산
+  let sumLng = 0, sumLat = 0
+  for (const [lng, lat] of polygon) {
+    sumLng += lng
+    sumLat += lat
+  }
+  const centerLng = sumLng / polygon.length
+  const centerLat = sumLat / polygon.length
+
+  // WGS84 → 미터 변환 (제주도 위도 기준)
+  // 1도 위도 ≈ 111,320m
+  // 1도 경도 ≈ 111,320 × cos(위도) m
+  const metersPerDegreeLat = 111320
+  const metersPerDegreeLng = 111320 * Math.cos(centerLat * Math.PI / 180)
+
+  // 폴리곤 좌표를 로컬 미터로 변환 (중심 기준)
+  const points: [number, number][] = polygon.map(([lng, lat]) => {
+    const x = (lng - centerLng) * metersPerDegreeLng
+    const z = (lat - centerLat) * metersPerDegreeLat
+    return [x, z]
+  })
+
+  return { points, center: [centerLng, centerLat] }
 }
 
 // 대지 크기 계산 (실제 dimensions가 있으면 사용, 없으면 정사각형 가정)
@@ -336,10 +368,12 @@ function FloorLines({
 // 대지 경계 및 이격선
 function LandBoundary({
   landDimensions,
+  landPolygon,
   setbacks,
   actualBackSetback,
 }: {
   landDimensions: { width: number; depth: number }
+  landPolygon?: [number, number][]  // [lng, lat][] 지적도 폴리곤 좌표
   setbacks: BuildingConfig['setbacks']
   actualBackSetback?: number  // 실제 1층 북측 이격거리 (floorSetbacks[0])
 }) {
@@ -351,38 +385,90 @@ function LandBoundary({
     back: actualBackSetback ?? setbacks.back,
   }
 
+  // 폴리곤 좌표를 로컬 좌표로 변환
+  const localPolygon = useMemo(() => {
+    if (landPolygon && landPolygon.length >= 3) {
+      return convertPolygonToLocal(landPolygon)
+    }
+    return null
+  }, [landPolygon])
+
+  // 폴리곤 Shape 생성 (Three.js용)
+  const landShape = useMemo(() => {
+    if (localPolygon && localPolygon.points.length >= 3) {
+      const shape = new THREE.Shape()
+      const pts = localPolygon.points
+      shape.moveTo(pts[0][0], pts[0][1])
+      for (let i = 1; i < pts.length; i++) {
+        shape.lineTo(pts[i][0], pts[i][1])
+      }
+      shape.closePath()
+      return shape
+    }
+    return null
+  }, [localPolygon])
+
+  // 폴리곤 경계선 포인트 (3D Line용)
+  const boundaryPoints: [number, number, number][] = useMemo(() => {
+    if (localPolygon && localPolygon.points.length >= 3) {
+      const pts = localPolygon.points.map(([x, z]) => [x, 0.01, z] as [number, number, number])
+      // 폐합을 위해 첫 점 추가
+      if (pts.length > 0) {
+        pts.push([...pts[0]])
+      }
+      return pts
+    }
+    // fallback: 사각형
+    return [
+      [-width / 2, 0.01, -depth / 2],
+      [width / 2, 0.01, -depth / 2],
+      [width / 2, 0.01, depth / 2],
+      [-width / 2, 0.01, depth / 2],
+      [-width / 2, 0.01, -depth / 2],
+    ]
+  }, [localPolygon, width, depth])
+
+  // 모서리 포인트
+  const cornerPoints: [number, number, number][] = useMemo(() => {
+    if (localPolygon && localPolygon.points.length >= 3) {
+      return localPolygon.points.map(([x, z]) => [x, 0.02, z] as [number, number, number])
+    }
+    return [
+      [-width / 2, 0.02, -depth / 2],
+      [width / 2, 0.02, -depth / 2],
+      [width / 2, 0.02, depth / 2],
+      [-width / 2, 0.02, depth / 2],
+    ]
+  }, [localPolygon, width, depth])
+
   return (
     <group>
-      {/* 대지 바닥 */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
-        <planeGeometry args={[width, depth]} />
-        <meshStandardMaterial color="#1a472a" side={THREE.DoubleSide} />
-      </mesh>
+      {/* 대지 바닥 - 폴리곤 또는 사각형 */}
+      {landShape ? (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
+          <shapeGeometry args={[landShape]} />
+          <meshStandardMaterial color="#1a472a" side={THREE.DoubleSide} />
+        </mesh>
+      ) : (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
+          <planeGeometry args={[width, depth]} />
+          <meshStandardMaterial color="#1a472a" side={THREE.DoubleSide} />
+        </mesh>
+      )}
 
       {/* 대지 경계선 */}
       <Line
-        points={[
-          [-width / 2, 0.01, -depth / 2],
-          [width / 2, 0.01, -depth / 2],
-          [width / 2, 0.01, depth / 2],
-          [-width / 2, 0.01, depth / 2],
-          [-width / 2, 0.01, -depth / 2],
-        ]}
+        points={boundaryPoints}
         color="#22c55e"
         lineWidth={3}
       />
 
-      {/* 이격거리 표시 */}
-      <SetbackLines landDimensions={landDimensions} setbacks={displaySetbacks} />
+      {/* 이격거리 표시 - 사각형 fallback에서만 */}
+      {!landShape && <SetbackLines landDimensions={landDimensions} setbacks={displaySetbacks} />}
 
       {/* 대지 모서리 포인트 */}
-      {[
-        [-width / 2, 0.02, -depth / 2],
-        [width / 2, 0.02, -depth / 2],
-        [width / 2, 0.02, depth / 2],
-        [-width / 2, 0.02, depth / 2],
-      ].map((pos, i) => (
-        <mesh key={i} position={pos as [number, number, number]}>
+      {cornerPoints.map((pos, i) => (
+        <mesh key={i} position={pos}>
           <sphereGeometry args={[0.3, 16, 16]} />
           <meshStandardMaterial color="#22c55e" />
         </mesh>
@@ -1137,7 +1223,7 @@ function AutoRotate({ enabled = false }: { enabled?: boolean }) {
   return null
 }
 
-export function MassViewer3D({ building, landArea, landDimensions: propLandDimensions, useZone = '제2종일반주거지역', showNorthSetback = true, floorSetbacks, address }: MassViewer3DProps) {
+export function MassViewer3D({ building, landArea, landDimensions: propLandDimensions, landPolygon, useZone = '제2종일반주거지역', showNorthSetback = true, floorSetbacks, address }: MassViewer3DProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('perspective')
   const [showExportMenu, setShowExportMenu] = useState(false)
   const landDimensions = useMemo(() => calculateLandDimensions(landArea, propLandDimensions), [landArea, propLandDimensions])
@@ -1228,6 +1314,7 @@ export function MassViewer3D({ building, landArea, landDimensions: propLandDimen
         {/* 대지 경계 */}
         <LandBoundary
           landDimensions={landDimensions}
+          landPolygon={landPolygon}
           setbacks={building.setbacks}
           actualBackSetback={floorSetbacks && floorSetbacks.length > 0 ? floorSetbacks[0] : undefined}
         />
