@@ -115,16 +115,31 @@ function getPolygonArea(points: [number, number][]): number {
   return area / 2
 }
 
-// 폴리곤 내부 축소 (Polygon Offset) - 이격거리 적용
+// 폴리곤 내부 축소 (Polygon Offset) - 단일 이격거리 적용
 function offsetPolygon(points: [number, number][], offset: number): [number, number][] {
-  if (points.length < 3 || offset <= 0) return points
+  return offsetPolygonDirectional(points, { front: offset, back: offset, left: offset, right: offset })
+}
+
+// 방향별 이격거리를 적용하는 폴리곤 축소
+// setbacks: { front(남쪽/-Z), back(북쪽/+Z), left(-X), right(+X) }
+function offsetPolygonDirectional(
+  points: [number, number][],
+  setbacks: { front: number; back: number; left: number; right: number }
+): [number, number][] {
+  if (points.length < 3) return points
 
   const result: [number, number][] = []
   const n = points.length
 
-  // 폴리곤 방향 확인 (시계방향이면 법선 방향 반전 필요)
+  // 폴리곤 방향 확인
   const area = getPolygonArea(points)
-  const direction = area >= 0 ? 1 : -1  // 반시계=1, 시계=-1
+  const direction = area >= 0 ? 1 : -1
+
+  // 폴리곤 중심 계산
+  let sumX = 0, sumZ = 0
+  for (const [x, z] of points) { sumX += x; sumZ += z }
+  const centerX = sumX / n
+  const centerZ = sumZ / n
 
   for (let i = 0; i < n; i++) {
     const prev = points[(i - 1 + n) % n]
@@ -135,26 +150,38 @@ function offsetPolygon(points: [number, number][], offset: number): [number, num
     const v1 = [curr[0] - prev[0], curr[1] - prev[1]]
     const v2 = [next[0] - curr[0], next[1] - curr[1]]
 
-    // 법선 벡터 (내부 방향으로 조정)
     const len1 = Math.sqrt(v1[0] * v1[0] + v1[1] * v1[1])
     const len2 = Math.sqrt(v2[0] * v2[0] + v2[1] * v2[1])
     if (len1 === 0 || len2 === 0) continue
 
-    // 법선 방향을 폴리곤 방향에 맞게 조정
+    // 법선 벡터
     const n1 = [direction * v1[1] / len1, -direction * v1[0] / len1]
     const n2 = [direction * v2[1] / len2, -direction * v2[0] / len2]
 
-    // 평균 법선 (꼭지점 이동 방향)
+    // 평균 법선
     const avgNx = (n1[0] + n2[0]) / 2
     const avgNy = (n1[1] + n2[1]) / 2
     const avgLen = Math.sqrt(avgNx * avgNx + avgNy * avgNy)
 
     if (avgLen > 0) {
-      // 꼭지점 각도에 따른 보정 (예각일수록 더 많이 이동)
-      const scale = 1 / Math.max(avgLen, 0.5)  // 너무 큰 이동 방지
+      const scale = 1 / Math.max(avgLen, 0.5)
+
+      // 현재 점이 폴리곤 중심 기준 어느 방향에 있는지 판단하여 이격거리 결정
+      const relX = curr[0] - centerX
+      const relZ = curr[1] - centerZ
+
+      // 방향별 이격거리 선택 (주요 방향 기준)
+      let offset: number
+      if (Math.abs(relZ) > Math.abs(relX)) {
+        // Z 방향이 더 멀면 (북쪽/남쪽)
+        offset = relZ > 0 ? setbacks.back : setbacks.front
+      } else {
+        // X 방향이 더 멀면 (동쪽/서쪽)
+        offset = relX > 0 ? setbacks.right : setbacks.left
+      }
 
       result.push([
-        curr[0] - avgNx * scale * offset,  // 내부 방향으로 이동 (폴리곤 축소)
+        curr[0] - avgNx * scale * offset,
         curr[1] - avgNy * scale * offset
       ])
     } else {
@@ -294,26 +321,32 @@ function BuildingMass({ building, landDimensions, landPolygon, floorSetbacks, us
   const isSteppedBuilding = floorSetbacks && floorSetbacks.length > 0
 
   // 1층 기준 북측 이격거리 (계단형이면 첫번째 값 사용)
+  // 건축법 시행령 제86조: 10m 이하 1.5m, 10m 초과 높이/2
   const baseBackSetback = isSteppedBuilding && floorSetbacks && floorSetbacks[0]
     ? floorSetbacks[0]
     : building.setbacks.back
 
-  // 평균 이격거리 (폴리곤 축소용)
-  const avgSetback = (building.setbacks.front + baseBackSetback + building.setbacks.left + building.setbacks.right) / 4
+  // 방향별 이격거리 (북쪽은 일조권 기준)
+  const directionalSetbacks = useMemo(() => ({
+    front: building.setbacks.front,
+    back: baseBackSetback,  // 북쪽: 일조권 이격 (높이/2)
+    left: building.setbacks.left,
+    right: building.setbacks.right,
+  }), [building.setbacks, baseBackSetback])
 
-  // 폴리곤 좌표를 로컬 좌표로 변환 후 이격거리 적용
+  // 폴리곤 좌표를 로컬 좌표로 변환 후 방향별 이격거리 적용
   const buildableArea = useMemo(() => {
     if (landPolygon && landPolygon.length >= 3) {
       const localPolygon = convertPolygonToLocal(landPolygon)
       if (localPolygon.points.length >= 3) {
-        // 이격거리 적용된 내부 폴리곤
-        const shrunkPolygon = offsetPolygon(localPolygon.points, avgSetback)
+        // 방향별 이격거리 적용된 내부 폴리곤 (북쪽은 일조권 이격)
+        const shrunkPolygon = offsetPolygonDirectional(localPolygon.points, directionalSetbacks)
         // 최대 내접 사각형 계산
         return getMaxInscribedRect(shrunkPolygon)
       }
     }
     return null
-  }, [landPolygon, avgSetback])
+  }, [landPolygon, directionalSetbacks])
 
   // 건물 가용 영역 계산 (폴리곤 기반 또는 bounding box 기반)
   const availableWidth = buildableArea
@@ -560,14 +593,11 @@ function LandBoundary({
 }) {
   const { width, depth } = landDimensions
 
-  // 실제 표시할 이격거리 (계단형이면 1층 기준)
+  // 실제 표시할 이격거리 (계단형이면 1층 기준, 북쪽은 일조권 이격)
   const displaySetbacks = {
     ...setbacks,
     back: actualBackSetback ?? setbacks.back,
   }
-
-  // 평균 이격거리 계산 (폴리곤 축소용)
-  const avgSetback = (displaySetbacks.front + displaySetbacks.back + displaySetbacks.left + displaySetbacks.right) / 4
 
   // 폴리곤 좌표를 로컬 좌표로 변환
   const localPolygon = useMemo(() => {
@@ -577,13 +607,13 @@ function LandBoundary({
     return null
   }, [landPolygon])
 
-  // 이격거리 적용된 내부 폴리곤 (실제 폴리곤 형상을 따름)
+  // 방향별 이격거리 적용된 내부 폴리곤 (북쪽은 일조권 이격)
   const offsetPolygonPoints = useMemo(() => {
     if (localPolygon && localPolygon.points.length >= 3) {
-      return offsetPolygon(localPolygon.points, avgSetback)
+      return offsetPolygonDirectional(localPolygon.points, displaySetbacks)
     }
     return null
-  }, [localPolygon, avgSetback])
+  }, [localPolygon, displaySetbacks])
 
   // 폴리곤 Shape 생성 (Three.js용)
   // 주의: Shape는 XY 평면에서 생성 후 -90도 회전하여 XZ 평면에 배치
