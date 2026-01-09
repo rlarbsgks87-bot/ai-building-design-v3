@@ -633,7 +633,13 @@ class VWorldService:
                 params=params,
                 timeout=15
             )
-            data = response.json()
+
+            # JSON 파싱 에러 처리
+            try:
+                data = response.json()
+            except Exception:
+                # VWorld API가 HTML 에러 반환 시
+                return {'success': False, 'error': f'VWorld API 응답 오류: {response.text[:200]}'}
 
             status = data.get('response', {}).get('status')
             if status == 'OK':
