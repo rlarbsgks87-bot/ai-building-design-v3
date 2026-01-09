@@ -609,6 +609,7 @@ function DesignPageContent() {
             useZone={landInfo.useZone}
             showNorthSetback={true}
             floorSetbacks={currentFloorSetbacks}
+            address={landInfo.address}
           />
 
           {/* Quick Stats Overlay */}

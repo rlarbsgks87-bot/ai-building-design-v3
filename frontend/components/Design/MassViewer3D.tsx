@@ -4,6 +4,7 @@ import { useRef, useMemo, useEffect, useState } from 'react'
 import { Canvas, useThree, useFrame } from '@react-three/fiber'
 import { OrbitControls, Grid, Text, Environment, Line, PerspectiveCamera, OrthographicCamera } from '@react-three/drei'
 import * as THREE from 'three'
+import { downloadOBJ, downloadDXF, downloadSTEP } from '@/lib/exportModel'
 
 interface BuildingConfig {
   id: string
@@ -67,6 +68,7 @@ interface MassViewer3DProps {
   useZone?: string  // 용도지역 (주거지역인 경우 일조권 적용)
   showNorthSetback?: boolean  // 북쪽 일조권 표시 여부
   floorSetbacks?: number[]  // 층별 북측 이격거리 (계단형 매스용)
+  address?: string  // 주소 (내보내기시 메타데이터용)
 }
 
 // 대지 크기 계산 (실제 dimensions가 있으면 사용, 없으면 정사각형 가정)
@@ -1135,8 +1137,9 @@ function AutoRotate({ enabled = false }: { enabled?: boolean }) {
   return null
 }
 
-export function MassViewer3D({ building, landArea, landDimensions: propLandDimensions, useZone = '제2종일반주거지역', showNorthSetback = true, floorSetbacks }: MassViewer3DProps) {
+export function MassViewer3D({ building, landArea, landDimensions: propLandDimensions, useZone = '제2종일반주거지역', showNorthSetback = true, floorSetbacks, address }: MassViewer3DProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('perspective')
+  const [showExportMenu, setShowExportMenu] = useState(false)
   const landDimensions = useMemo(() => calculateLandDimensions(landArea, propLandDimensions), [landArea, propLandDimensions])
   const buildingHeight = building.floors * building.floorHeight
   const viewDistance = useMemo(() => Math.max(landDimensions.width, landDimensions.depth, buildingHeight) * 1.5, [landDimensions, buildingHeight])
@@ -1354,6 +1357,73 @@ export function MassViewer3D({ building, landArea, landDimensions: propLandDimen
           조감
         </button>
       </div>
+
+      {/* 내보내기 버튼 */}
+      <div className="absolute top-[140px] right-4">
+        <div className="relative">
+          <button
+            onClick={() => setShowExportMenu(!showExportMenu)}
+            className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            3D 내보내기
+          </button>
+
+          {showExportMenu && (
+            <div className="absolute right-0 mt-2 w-48 bg-gray-800 rounded-lg shadow-xl border border-gray-700 overflow-hidden z-50">
+              <button
+                onClick={() => {
+                  downloadOBJ(building, landArea, propLandDimensions, floorSetbacks, useZone, address, building.name)
+                  setShowExportMenu(false)
+                }}
+                className="w-full px-4 py-3 text-left text-sm text-white hover:bg-gray-700 flex items-center gap-3"
+              >
+                <span className="text-lg">📦</span>
+                <div>
+                  <div className="font-medium">OBJ 형식</div>
+                  <div className="text-xs text-gray-400">라이노, 3ds Max 호환</div>
+                </div>
+              </button>
+              <button
+                onClick={() => {
+                  downloadDXF(building, landArea, propLandDimensions, floorSetbacks, useZone, address, building.name)
+                  setShowExportMenu(false)
+                }}
+                className="w-full px-4 py-3 text-left text-sm text-white hover:bg-gray-700 flex items-center gap-3 border-t border-gray-700"
+              >
+                <span className="text-lg">📐</span>
+                <div>
+                  <div className="font-medium">DXF 형식</div>
+                  <div className="text-xs text-gray-400">AutoCAD 호환</div>
+                </div>
+              </button>
+              <button
+                onClick={() => {
+                  downloadSTEP(building, landArea, propLandDimensions, floorSetbacks, useZone, address, building.name)
+                  setShowExportMenu(false)
+                }}
+                className="w-full px-4 py-3 text-left text-sm text-white hover:bg-gray-700 flex items-center gap-3 border-t border-gray-700"
+              >
+                <span className="text-lg">🔧</span>
+                <div>
+                  <div className="font-medium">STEP 형식</div>
+                  <div className="text-xs text-gray-400">SolidWorks, CATIA 호환</div>
+                </div>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 메뉴 외부 클릭시 닫기 */}
+      {showExportMenu && (
+        <div
+          className="fixed inset-0 z-40"
+          onClick={() => setShowExportMenu(false)}
+        />
+      )}
 
       {/* 범례 */}
       <div className="absolute bottom-4 right-4 bg-gray-800/90 backdrop-blur rounded-lg p-3 text-xs">
