@@ -25,10 +25,10 @@ JEJU_BUILDING_LIMITS = {
     '농림지역': {'coverage': 20, 'far': 50, 'height_limit': '3층 이하'},
 }
 
-# 취락지구 특례
+# 취락지구 특례 (국토의 계획 및 이용에 관한 법률)
+# 자연취락지구: 건폐율 60% 이하, 용적률 100% 이하
 SETTLEMENT_DISTRICT_LIMITS = {
-    'green': {'coverage': 50, 'far': 100},  # 자연녹지 내 취락지구
-    'managed': {'coverage': 60, 'far': 100},  # 관리지역 내 취락지구
+    'default': {'coverage': 60, 'far': 100},  # 자연취락지구 기본
 }
 
 # 기본값 (알 수 없는 용도지역)
@@ -50,13 +50,12 @@ def get_building_limits(use_zone: str, is_settlement: bool = False) -> dict:
         dict: coverage, far, height_limit, note
     """
     if is_settlement:
-        is_green = '녹지' in use_zone
-        limits = SETTLEMENT_DISTRICT_LIMITS['green' if is_green else 'managed']
+        limits = SETTLEMENT_DISTRICT_LIMITS['default']
         return {
             'coverage': limits['coverage'],
             'far': limits['far'],
             'height_limit': None,
-            'note': '취락지구 특례 적용',
+            'note': '취락지구 특례 적용 (건폐율 60%, 용적률 100%)',
         }
 
     limits = JEJU_BUILDING_LIMITS.get(use_zone, DEFAULT_BUILDING_LIMITS)

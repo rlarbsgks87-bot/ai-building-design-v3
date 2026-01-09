@@ -758,8 +758,16 @@ class LandService:
             is_urban = dong.endswith('동')
             primary_zone = '제2종일반주거지역' if is_urban else '계획관리지역'
 
-        # 건폐율/용적률 기준
-        limits = get_building_limits(primary_zone)
+        # 취락지구 확인
+        is_settlement = False
+        for zone in land_use.get('zones', []):
+            zone_name = zone.get('name', '')
+            if '취락지구' in zone_name:
+                is_settlement = True
+                break
+
+        # 건폐율/용적률 기준 (취락지구 특례 적용)
+        limits = get_building_limits(primary_zone, is_settlement=is_settlement)
 
         return {
             'success': True,
@@ -923,7 +931,19 @@ class LandService:
             return {'success': False, 'error': 'NOT_FOUND'}
 
         use_zone = land.use_zone or ''
-        limits = get_building_limits(use_zone)
+
+        # 토지이용계획 조회하여 취락지구 확인
+        land_use = self.lambda_proxy.get_land_use(pnu)
+        is_settlement = False
+        if land_use.get('success'):
+            zones = land_use.get('zones', [])
+            for zone in zones:
+                zone_name = zone.get('name', '')
+                if '취락지구' in zone_name:
+                    is_settlement = True
+                    break
+
+        limits = get_building_limits(use_zone, is_settlement=is_settlement)
 
         parcel_area = land.parcel_area or 0
         max_building_area = parcel_area * limits['coverage'] / 100
