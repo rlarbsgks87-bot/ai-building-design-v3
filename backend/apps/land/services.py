@@ -635,7 +635,8 @@ class VWorldService:
             )
             data = response.json()
 
-            if data.get('response', {}).get('status') == 'OK':
+            status = data.get('response', {}).get('status')
+            if status == 'OK':
                 results = data['response'].get('result', [])
                 if results:
                     result_item = results[0]
@@ -666,7 +667,9 @@ class VWorldService:
                     cache.set(cache_key, result, 3600)
                     return result
 
-            return {'success': False, 'error': '해당 좌표에 필지 정보가 없습니다'}
+            # 디버깅을 위해 실제 에러 메시지 반환
+            error_msg = data.get('response', {}).get('error', {}).get('text', '해당 좌표에 필지 정보가 없습니다')
+            return {'success': False, 'error': f'VWorld API: {status} - {error_msg}'}
 
         except Exception as e:
             return {'success': False, 'error': str(e)}
