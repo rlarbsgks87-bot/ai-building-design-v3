@@ -125,7 +125,7 @@ class ParcelByPointView(APIView):
         return Response({
             'success': False,
             'error': 'NOT_FOUND',
-            'message': '해당 좌표에 필지 정보가 없습니다.',
+            'message': result.get('error', '해당 좌표에 필지 정보가 없습니다.'),
         }, status=status.HTTP_404_NOT_FOUND)
 
 
