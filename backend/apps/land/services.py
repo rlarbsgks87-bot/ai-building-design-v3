@@ -798,7 +798,7 @@ class VWorldService:
         """
         import math
 
-        cache_key = f"adjacent_roads:{pnu}"
+        cache_key = f"adjacent_roads_v2:{pnu}"  # v2: Kakao fallback 추가
         cached = cache.get(cache_key)
         if cached:
             return cached
