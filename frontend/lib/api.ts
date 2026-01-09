@@ -44,6 +44,19 @@ export interface SearchResult {
   y: number
 }
 
+export interface BuildingInfo {
+  name: string | null
+  main_purpose: string
+  total_area: number
+  building_area: number
+  floors: {
+    above: number
+    below: number
+  }
+  parking_count: number
+  approval_date: string | null
+}
+
 export interface LandDetail {
   pnu: string
   address_jibun: string
@@ -53,6 +66,10 @@ export interface LandDetail {
   official_land_price: number | null
   latitude: number
   longitude: number
+  building?: {
+    exists: boolean
+    buildings: BuildingInfo[]
+  }
 }
 
 export interface Regulation {

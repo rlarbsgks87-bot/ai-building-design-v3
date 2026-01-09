@@ -4,7 +4,7 @@ import { useState, useEffect, Suspense, useCallback, useRef } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
-import { landApi, LandDetail, Regulation, MassResult } from '@/lib/api'
+import { landApi, LandDetail, Regulation, MassResult, BuildingInfo } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
 import type { SelectedParcel, ParcelInfo } from '@/components/Map/KakaoMap'
 
@@ -62,6 +62,7 @@ function getRecentLands(): RecentLand[] {
 // 필지 상세 정보 타입
 interface ParcelDetail extends LandDetail {
   regulation?: Regulation | null
+  regulationError?: boolean
 }
 
 function SearchPageContent() {
@@ -204,13 +205,29 @@ function SearchPageContent() {
           setParcelDetails(prev => {
             const current = prev.get(parcel.pnu)
             if (current) {
-              return new Map(prev).set(parcel.pnu, { ...current, regulation: regResult.data })
+              return new Map(prev).set(parcel.pnu, { ...current, regulation: regResult.data, regulationError: false })
+            }
+            return prev
+          })
+        } else {
+          // API 실패 시 에러 표시
+          setParcelDetails(prev => {
+            const current = prev.get(parcel.pnu)
+            if (current) {
+              return new Map(prev).set(parcel.pnu, { ...current, regulationError: true })
             }
             return prev
           })
         }
       } catch (error) {
         console.error('Failed to get regulation:', error)
+        setParcelDetails(prev => {
+          const current = prev.get(parcel.pnu)
+          if (current) {
+            return new Map(prev).set(parcel.pnu, { ...current, regulationError: true })
+          }
+          return prev
+        })
       }
     } catch (error) {
       console.error('Failed to get land detail:', error)
@@ -571,15 +588,35 @@ function SearchPageContent() {
                   <h3 className="text-base font-bold text-gray-900 mb-4 flex items-center gap-2">
                     <span className="text-lg">🏢</span> 건물 정보
                   </h3>
-                  <div className="bg-gray-50 rounded-xl p-6 text-center">
-                    <div className="text-4xl mb-3 opacity-50">🏗️</div>
-                    <p className="text-gray-500 text-sm">
-                      {selectedParcels.length > 1
-                        ? '합병 후 신규 건축 가능'
-                        : '이 필지에 건물 정보가 없습니다.'}
-                    </p>
-                    <p className="text-gray-400 text-xs mt-1">건축물대장 정보가 등록되면 표시됩니다.</p>
-                  </div>
+                  {primaryDetail?.building?.exists && primaryDetail.building.buildings.length > 0 ? (
+                    <div className="space-y-3">
+                      {primaryDetail.building.buildings.map((bldg, idx) => (
+                        <div key={idx} className="bg-gray-50 rounded-xl p-4">
+                          {bldg.name && bldg.name.trim() && (
+                            <p className="font-semibold text-gray-900 mb-2">{bldg.name}</p>
+                          )}
+                          <div className="space-y-2">
+                            <InfoRow label="주용도" value={bldg.main_purpose || '-'} highlight />
+                            <InfoRow label="연면적" value={bldg.total_area ? `${bldg.total_area.toLocaleString()}m²` : '-'} />
+                            <InfoRow label="건축면적" value={bldg.building_area ? `${bldg.building_area.toLocaleString()}m²` : '-'} />
+                            <InfoRow label="층수" value={`지상 ${bldg.floors.above}층${bldg.floors.below > 0 ? `, 지하 ${bldg.floors.below}층` : ''}`} />
+                            <InfoRow label="주차대수" value={bldg.parking_count ? `${bldg.parking_count}대` : '-'} />
+                            <InfoRow label="사용승인일" value={bldg.approval_date ? `${bldg.approval_date.slice(0,4)}-${bldg.approval_date.slice(4,6)}-${bldg.approval_date.slice(6,8)}` : '-'} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="bg-gray-50 rounded-xl p-6 text-center">
+                      <div className="text-4xl mb-3 opacity-50">🏗️</div>
+                      <p className="text-gray-500 text-sm">
+                        {selectedParcels.length > 1
+                          ? '합병 후 신규 건축 가능'
+                          : '이 필지에 건물 정보가 없습니다.'}
+                      </p>
+                      <p className="text-gray-400 text-xs mt-1">건축물대장 정보가 등록되면 표시됩니다.</p>
+                    </div>
+                  )}
                 </div>
 
                 {/* 법규/설계 섹션 */}
@@ -618,6 +655,12 @@ function SearchPageContent() {
                                 <p className="text-xs text-yellow-800">{regulation.note}</p>
                               </div>
                             )}
+                          </div>
+                        ) : detail?.regulationError ? (
+                          <div className="bg-red-50 rounded-xl p-6 text-center">
+                            <div className="text-3xl mb-2">⚠️</div>
+                            <p className="text-red-600 text-sm font-medium">법규 정보를 불러올 수 없습니다</p>
+                            <p className="text-gray-400 text-xs mt-1">잠시 후 다시 시도해주세요</p>
                           </div>
                         ) : (
                           <div className="bg-gray-50 rounded-xl p-6 text-center">
@@ -822,6 +865,7 @@ function SearchPageContent() {
             viewMode={viewMode}
             isMultiSelectMode={isMultiSelectMode}
             onMultiSelectModeChange={setIsMultiSelectMode}
+            center={mapCenter}
           />
 
           {/* Coordinates Display */}

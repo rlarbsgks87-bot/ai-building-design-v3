@@ -36,6 +36,7 @@ interface KakaoMapProps {
   onMapSettingsChange?: (settings: MapSettings) => void
   isMultiSelectMode?: boolean
   onMultiSelectModeChange?: (mode: boolean) => void
+  center?: { lat: number; lng: number }
 }
 
 const defaultSettings: MapSettings = {
@@ -54,7 +55,8 @@ export function KakaoMap({
   mapSettings = defaultSettings,
   onMapSettingsChange,
   isMultiSelectMode = false,
-  onMultiSelectModeChange
+  onMultiSelectModeChange,
+  center
 }: KakaoMapProps) {
   const mapRef = useRef<HTMLDivElement>(null)
   const roadviewRef = useRef<HTMLDivElement>(null)
@@ -380,6 +382,15 @@ export function KakaoMap({
       updateMapType(mapSettings, viewMode === 'roadview')
     }
   }, [mapSettings, isMapReady, updateMapType, viewMode])
+
+  // center prop 변경 시 지도 이동
+  useEffect(() => {
+    if (center && isMapReady && mapInstanceRef.current) {
+      const newCenter = new window.kakao.maps.LatLng(center.lat, center.lng)
+      mapInstanceRef.current.setCenter(newCenter)
+      mapInstanceRef.current.setLevel(3) // 적당한 줌 레벨로 설정
+    }
+  }, [center, isMapReady])
 
   const initMap = () => {
     if (!mapRef.current || !roadviewRef.current) {
