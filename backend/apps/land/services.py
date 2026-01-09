@@ -666,7 +666,7 @@ class VWorldService:
         return abs(area) / 2.0
 
     def get_parcel_geometry(self, pnu: str) -> dict:
-        """필지 폴리곤 지오메트리 조회 (VWorld 연속지적도)
+        """필지 폴리곤 지오메트리 조회 (Lambda 프록시 우선, VWorld 직접 호출 백업)
 
         Returns:
             dict: {
@@ -677,97 +677,112 @@ class VWorldService:
                 center: { lng, lat }  # 중심점
             }
         """
-        if not self.api_key:
-            return {'success': False, 'error': 'VWorld API 키가 없습니다'}
-
         cache_key = f"parcel_geom:{pnu}"
         cached = cache.get(cache_key)
         if cached:
             return cached
 
+        import math
+        geometry = None
+        coords = None
+
+        # 1차: Lambda 프록시를 통해 geometry 가져오기 (VWorld 도메인 검증 우회)
         try:
-            # 연속지적도 조회
-            params = {
-                'service': 'data',
-                'request': 'GetFeature',
-                'data': 'LP_PA_CBND_BUBUN',
-                'key': self.api_key,
-                'domain': settings.VWORLD_DOMAIN,
-                'attrFilter': f'pnu:=:{pnu}',
-                'format': 'json',
-                'errorformat': 'json',
-                'crs': 'EPSG:4326',
-                'geometry': 'true',
-                'attribute': 'true',
-            }
-
-            response = requests.get(self.DATA_URL, params=params, timeout=15)
-            data = response.json()
-
-            if data.get('response', {}).get('status') == 'OK':
-                features = data['response'].get('result', {}).get('featureCollection', {}).get('features', [])
-                if features:
-                    feature = features[0]
-                    geometry = feature.get('geometry', {})
+            url = f"{self.lambda_proxy.base_url}?pnu={pnu}"
+            response = requests.get(url, timeout=15)
+            if response.status_code == 200:
+                data = response.json()
+                cadastral = data.get('cadastral') or {}
+                if cadastral.get('geometry'):
+                    geometry = cadastral['geometry']
                     coords = geometry.get('coordinates', [[]])
-
-                    # MultiPolygon 또는 Polygon 처리
-                    if geometry.get('type') == 'MultiPolygon':
-                        polygon_coords = coords[0][0]  # 첫 번째 폴리곤의 외곽선
-                    elif geometry.get('type') == 'Polygon':
-                        polygon_coords = coords[0]  # 외곽선
-                    else:
-                        polygon_coords = coords
-
-                    if not polygon_coords:
-                        return {'success': False, 'error': '폴리곤 좌표가 없습니다'}
-
-                    # 바운딩 박스 계산
-                    lngs = [c[0] for c in polygon_coords]
-                    lats = [c[1] for c in polygon_coords]
-                    min_lng, max_lng = min(lngs), max(lngs)
-                    min_lat, max_lat = min(lats), max(lats)
-
-                    # 중심점
-                    center_lng = (min_lng + max_lng) / 2
-                    center_lat = (min_lat + max_lat) / 2
-
-                    # WGS84 좌표를 미터로 변환 (Haversine 근사)
-                    import math
-                    lat_rad = math.radians(center_lat)
-
-                    # 위도 1도 = 약 111km, 경도 1도 = 111km * cos(위도)
-                    meters_per_lat = 111320
-                    meters_per_lng = 111320 * math.cos(lat_rad)
-
-                    width = (max_lng - min_lng) * meters_per_lng
-                    depth = (max_lat - min_lat) * meters_per_lat
-
-                    result = {
-                        'success': True,
-                        'geometry': polygon_coords,
-                        'bbox': {
-                            'minX': min_lng,
-                            'minY': min_lat,
-                            'maxX': max_lng,
-                            'maxY': max_lat,
-                        },
-                        'dimensions': {
-                            'width': round(width, 2),
-                            'depth': round(depth, 2),
-                        },
-                        'center': {
-                            'lng': center_lng,
-                            'lat': center_lat,
-                        },
-                    }
-                    cache.set(cache_key, result, 604800)  # 7일
-                    return result
-
-            return {'success': False, 'error': '필지 지오메트리를 찾을 수 없습니다'}
-
         except Exception as e:
-            return {'success': False, 'error': str(e)}
+            pass  # Lambda 실패시 VWorld 직접 호출로 fallback
+
+        # 2차: Lambda 실패시 VWorld 직접 호출 (백업)
+        if not geometry and self.api_key:
+            try:
+                params = {
+                    'service': 'data',
+                    'request': 'GetFeature',
+                    'data': 'LP_PA_CBND_BUBUN',
+                    'key': self.api_key,
+                    'domain': settings.VWORLD_DOMAIN,
+                    'attrFilter': f'pnu:=:{pnu}',
+                    'format': 'json',
+                    'errorformat': 'json',
+                    'crs': 'EPSG:4326',
+                    'geometry': 'true',
+                    'attribute': 'true',
+                }
+
+                response = requests.get(self.DATA_URL, params=params, timeout=15)
+                data = response.json()
+
+                if data.get('response', {}).get('status') == 'OK':
+                    features = data['response'].get('result', {}).get('featureCollection', {}).get('features', [])
+                    if features:
+                        feature = features[0]
+                        geometry = feature.get('geometry', {})
+                        coords = geometry.get('coordinates', [[]])
+            except Exception:
+                pass
+
+        # geometry 처리
+        if geometry and coords:
+            # MultiPolygon 또는 Polygon 처리
+            if geometry.get('type') == 'MultiPolygon':
+                polygon_coords = coords[0][0]  # 첫 번째 폴리곤의 외곽선
+            elif geometry.get('type') == 'Polygon':
+                polygon_coords = coords[0]  # 외곽선
+            else:
+                polygon_coords = coords
+
+            if not polygon_coords:
+                return {'success': False, 'error': '폴리곤 좌표가 없습니다'}
+
+            # 바운딩 박스 계산
+            lngs = [c[0] for c in polygon_coords]
+            lats = [c[1] for c in polygon_coords]
+            min_lng, max_lng = min(lngs), max(lngs)
+            min_lat, max_lat = min(lats), max(lats)
+
+            # 중심점
+            center_lng = (min_lng + max_lng) / 2
+            center_lat = (min_lat + max_lat) / 2
+
+            # WGS84 좌표를 미터로 변환 (Haversine 근사)
+            lat_rad = math.radians(center_lat)
+
+            # 위도 1도 = 약 111km, 경도 1도 = 111km * cos(위도)
+            meters_per_lat = 111320
+            meters_per_lng = 111320 * math.cos(lat_rad)
+
+            width = (max_lng - min_lng) * meters_per_lng
+            depth = (max_lat - min_lat) * meters_per_lat
+
+            result = {
+                'success': True,
+                'geometry': polygon_coords,
+                'bbox': {
+                    'minX': min_lng,
+                    'minY': min_lat,
+                    'maxX': max_lng,
+                    'maxY': max_lat,
+                },
+                'dimensions': {
+                    'width': round(width, 2),
+                    'depth': round(depth, 2),
+                },
+                'center': {
+                    'lng': center_lng,
+                    'lat': center_lat,
+                },
+            }
+            cache.set(cache_key, result, 604800)  # 7일
+            return result
+
+        return {'success': False, 'error': '필지 지오메트리를 찾을 수 없습니다'}
 
     def search_address(self, query: str) -> dict:
         """주소 검색 (Lambda 프록시 우선 사용)"""
