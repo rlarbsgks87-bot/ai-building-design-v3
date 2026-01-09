@@ -103,12 +103,28 @@ function convertPolygonToLocal(polygon: [number, number][]): { points: [number, 
   return { points, center: [centerLng, centerLat] }
 }
 
+// 폴리곤 면적 계산 (Shoelace formula) - 양수면 반시계, 음수면 시계방향
+function getPolygonArea(points: [number, number][]): number {
+  let area = 0
+  const n = points.length
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n
+    area += points[i][0] * points[j][1]
+    area -= points[j][0] * points[i][1]
+  }
+  return area / 2
+}
+
 // 폴리곤 내부 축소 (Polygon Offset) - 이격거리 적용
 function offsetPolygon(points: [number, number][], offset: number): [number, number][] {
   if (points.length < 3 || offset <= 0) return points
 
   const result: [number, number][] = []
   const n = points.length
+
+  // 폴리곤 방향 확인 (시계방향이면 법선 방향 반전 필요)
+  const area = getPolygonArea(points)
+  const direction = area >= 0 ? 1 : -1  // 반시계=1, 시계=-1
 
   for (let i = 0; i < n; i++) {
     const prev = points[(i - 1 + n) % n]
@@ -119,13 +135,14 @@ function offsetPolygon(points: [number, number][], offset: number): [number, num
     const v1 = [curr[0] - prev[0], curr[1] - prev[1]]
     const v2 = [next[0] - curr[0], next[1] - curr[1]]
 
-    // 법선 벡터 (내부 방향)
+    // 법선 벡터 (내부 방향으로 조정)
     const len1 = Math.sqrt(v1[0] * v1[0] + v1[1] * v1[1])
     const len2 = Math.sqrt(v2[0] * v2[0] + v2[1] * v2[1])
     if (len1 === 0 || len2 === 0) continue
 
-    const n1 = [v1[1] / len1, -v1[0] / len1]  // 첫 번째 변의 법선
-    const n2 = [v2[1] / len2, -v2[0] / len2]  // 두 번째 변의 법선
+    // 법선 방향을 폴리곤 방향에 맞게 조정
+    const n1 = [direction * v1[1] / len1, -direction * v1[0] / len1]
+    const n2 = [direction * v2[1] / len2, -direction * v2[0] / len2]
 
     // 평균 법선 (꼭지점 이동 방향)
     const avgNx = (n1[0] + n2[0]) / 2
@@ -134,11 +151,10 @@ function offsetPolygon(points: [number, number][], offset: number): [number, num
 
     if (avgLen > 0) {
       // 꼭지점 각도에 따른 보정 (예각일수록 더 많이 이동)
-      const dot = n1[0] * n2[0] + n1[1] * n2[1]
       const scale = 1 / Math.max(avgLen, 0.5)  // 너무 큰 이동 방지
 
       result.push([
-        curr[0] - avgNx * scale * offset,
+        curr[0] - avgNx * scale * offset,  // 내부 방향으로 이동 (폴리곤 축소)
         curr[1] - avgNy * scale * offset
       ])
     } else {
