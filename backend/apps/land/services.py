@@ -269,6 +269,117 @@ class DataGoKrService:
             return {'success': False, 'error': str(e)}
 
 
+class KakaoLocalService:
+    """카카오 로컬 API 서비스
+
+    좌표→주소 변환을 통해 도로명 정보 조회
+    """
+
+    BASE_URL = 'https://dapi.kakao.com/v2/local'
+
+    def __init__(self):
+        self.api_key = getattr(settings, 'KAKAO_REST_API_KEY', '')
+        self.timeout = 10
+
+    def get_road_name_by_coord(self, lng: float, lat: float) -> dict:
+        """좌표로 도로명 주소 조회
+
+        Returns:
+            dict: {
+                success: bool,
+                road_name: str,  # 도로명 (예: '연북로')
+                road_address: str,  # 전체 도로명 주소
+                building_name: str,  # 건물명
+            }
+        """
+        if not self.api_key:
+            return {'success': False, 'error': 'Kakao API 키가 설정되지 않았습니다'}
+
+        cache_key = f"kakao_road:{lng:.6f}_{lat:.6f}"
+        cached = cache.get(cache_key)
+        if cached:
+            return cached
+
+        try:
+            url = f"{self.BASE_URL}/geo/coord2address.json"
+            headers = {'Authorization': f'KakaoAK {self.api_key}'}
+            params = {'x': lng, 'y': lat}
+
+            response = requests.get(url, headers=headers, params=params, timeout=self.timeout)
+            data = response.json()
+
+            if data.get('documents'):
+                doc = data['documents'][0]
+                road_address = doc.get('road_address') or {}
+
+                result = {
+                    'success': True,
+                    'road_name': road_address.get('road_name', ''),  # 도로명
+                    'road_address': road_address.get('address_name', ''),  # 전체 도로명 주소
+                    'building_name': road_address.get('building_name', ''),
+                    'region': road_address.get('region_3depth_name', ''),  # 동/읍/면
+                }
+                cache.set(cache_key, result, 86400)  # 24시간
+                return result
+
+            return {'success': False, 'error': '주소를 찾을 수 없습니다'}
+
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def get_nearest_road(self, center_lng: float, center_lat: float, search_directions: list = None) -> dict:
+        """필지 주변 도로 정보 조회 (여러 방향 검색)
+
+        Args:
+            center_lng, center_lat: 필지 중심 좌표
+            search_directions: 검색할 방향 리스트 ['south', 'north', 'east', 'west']
+
+        Returns:
+            dict: {
+                success: bool,
+                roads: [{ direction, road_name, distance }]
+            }
+        """
+        import math
+
+        if not search_directions:
+            search_directions = ['south', 'north', 'east', 'west']
+
+        # 방향별 오프셋 (약 20m)
+        offset_meters = 20
+        lat_offset = offset_meters / 111320
+        lng_offset = offset_meters / (111320 * math.cos(math.radians(center_lat)))
+
+        direction_offsets = {
+            'south': (0, -lat_offset),
+            'north': (0, lat_offset),
+            'east': (lng_offset, 0),
+            'west': (-lng_offset, 0),
+        }
+
+        roads = []
+        for direction in search_directions:
+            if direction not in direction_offsets:
+                continue
+
+            d_lng, d_lat = direction_offsets[direction]
+            search_lng = center_lng + d_lng
+            search_lat = center_lat + d_lat
+
+            result = self.get_road_name_by_coord(search_lng, search_lat)
+            if result.get('success') and result.get('road_name'):
+                roads.append({
+                    'direction': direction,
+                    'road_name': result['road_name'],
+                    'road_address': result.get('road_address', ''),
+                })
+
+        return {
+            'success': True,
+            'roads': roads,
+        }
+
+
 class LambdaProxyService:
     """AWS Lambda 프록시를 통한 VWorld API 호출 서비스
 
@@ -815,9 +926,24 @@ class VWorldService:
             except Exception as e:
                 pass  # 실패 시 빈 배열 반환
 
+        # VWorld에서 도로를 찾지 못한 경우 Kakao API로 도로명 조회 (fallback)
+        kakao_roads = []
+        if not roads:
+            try:
+                kakao = KakaoLocalService()
+                kakao_result = kakao.get_nearest_road(
+                    parcel_center['lng'],
+                    parcel_center['lat']
+                )
+                if kakao_result.get('success'):
+                    kakao_roads = kakao_result.get('roads', [])
+            except Exception:
+                pass
+
         result = {
             'success': True,
             'roads': roads,
+            'kakao_roads': kakao_roads,  # Kakao API에서 조회한 도로명 정보
             'parcel_center': parcel_center,
         }
         cache.set(cache_key, result, 604800)  # 7일

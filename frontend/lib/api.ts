@@ -210,9 +210,16 @@ export interface AdjacentRoad {
   }
 }
 
+export interface KakaoRoad {
+  direction: 'north' | 'south' | 'east' | 'west'
+  road_name: string  // 도로명 (예: '연북로')
+  road_address: string  // 전체 도로명 주소
+}
+
 export interface AdjacentRoadsResponse {
   success: boolean
   roads: AdjacentRoad[]
+  kakao_roads?: KakaoRoad[]  // Kakao API에서 조회한 도로명 (VWorld 도로 없을 때 fallback)
   parcel_center: {
     lng: number
     lat: number

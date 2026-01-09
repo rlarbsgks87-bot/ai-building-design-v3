@@ -100,6 +100,7 @@ VWORLD_API_KEY = os.environ.get('VWORLD_API_KEY', 'CEB52025-E065-364C-9DBA-44880
 VWORLD_DOMAIN = os.environ.get('VWORLD_DOMAIN', '*')  # VWorld 등록 도메인 (* = 서버용)
 LAMBDA_PROXY_URL = os.environ.get('LAMBDA_PROXY_URL', 'https://3a9op0tcy6.execute-api.ap-northeast-2.amazonaws.com/prod/')
 DATAGO_API_KEY = os.environ.get('DATAGO_API_KEY', '')
+KAKAO_REST_API_KEY = os.environ.get('KAKAO_REST_API_KEY', '')
 
 # Cache (Rate Limiting)
 CACHES = {

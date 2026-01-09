@@ -69,12 +69,19 @@ interface AdjacentRoad {
   center: { lng: number; lat: number }
 }
 
+interface KakaoRoad {
+  direction: 'north' | 'south' | 'east' | 'west'
+  road_name: string  // 도로명 (예: '연북로')
+  road_address: string  // 전체 도로명 주소
+}
+
 interface MassViewer3DProps {
   building: BuildingConfig
   landArea: number
   landDimensions?: { width: number; depth: number }  // VWorld에서 가져온 실제 필지 크기
   landPolygon?: [number, number][]  // [lng, lat][] 지적도 폴리곤 좌표
   adjacentRoads?: AdjacentRoad[]  // 인접 도로 데이터 (지적도 기반)
+  kakaoRoads?: KakaoRoad[]  // 도로명 정보 (Kakao API fallback)
   useZone?: string  // 용도지역 (주거지역인 경우 일조권 적용)
   showNorthSetback?: boolean  // 북쪽 일조권 표시 여부
   floorSetbacks?: number[]  // 층별 북측 이격거리 (계단형 매스용)
@@ -686,12 +693,14 @@ function LandBoundary({
   landDimensions,
   landPolygon,
   adjacentRoads,
+  kakaoRoads,
   setbacks,
   actualBackSetback,
 }: {
   landDimensions: { width: number; depth: number }
   landPolygon?: [number, number][]  // [lng, lat][] 지적도 폴리곤 좌표
   adjacentRoads?: AdjacentRoad[]  // 인접 도로 데이터
+  kakaoRoads?: KakaoRoad[]  // 도로명 정보 (Kakao fallback)
   setbacks: BuildingConfig['setbacks']
   actualBackSetback?: number  // 실제 1층 북측 이격거리 (floorSetbacks[0])
 }) {
@@ -852,7 +861,7 @@ function LandBoundary({
           />
         ))
       ) : (
-        // Fallback: 하드코딩된 도로 (전면/남쪽 방향)
+        // Fallback: 하드코딩된 도로 (카카오 도로명 표시)
         <group>
           {/* 도로 평면 */}
           <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.03, -depth / 2 - 4]} receiveShadow>
@@ -883,7 +892,7 @@ function LandBoundary({
             lineWidth={2}
           />
 
-          {/* 도로 라벨 */}
+          {/* 도로 라벨 (카카오에서 가져온 도로명 또는 기본값) */}
           <Text
             position={[0, 0.5, -depth / 2 - 4]}
             fontSize={1.2}
@@ -893,7 +902,9 @@ function LandBoundary({
             outlineWidth={0.05}
             outlineColor="#000000"
           >
-            도로
+            {kakaoRoads?.find(r => r.direction === 'south')?.road_name ||
+             kakaoRoads?.[0]?.road_name ||
+             '도로'}
           </Text>
 
           {/* 도로 방향 화살표 (양방향 통행) */}
@@ -1675,7 +1686,7 @@ function AutoRotate({ enabled = false }: { enabled?: boolean }) {
   return null
 }
 
-export function MassViewer3D({ building, landArea, landDimensions: propLandDimensions, landPolygon, adjacentRoads, useZone = '제2종일반주거지역', showNorthSetback = true, floorSetbacks, address }: MassViewer3DProps) {
+export function MassViewer3D({ building, landArea, landDimensions: propLandDimensions, landPolygon, adjacentRoads, kakaoRoads, useZone = '제2종일반주거지역', showNorthSetback = true, floorSetbacks, address }: MassViewer3DProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('perspective')
   const [showExportMenu, setShowExportMenu] = useState(false)
   const landDimensions = useMemo(() => calculateLandDimensions(landArea, propLandDimensions), [landArea, propLandDimensions])
@@ -1768,6 +1779,7 @@ export function MassViewer3D({ building, landArea, landDimensions: propLandDimen
           landDimensions={landDimensions}
           landPolygon={landPolygon}
           adjacentRoads={adjacentRoads}
+          kakaoRoads={kakaoRoads}
           setbacks={building.setbacks}
           actualBackSetback={floorSetbacks && floorSetbacks.length > 0 ? floorSetbacks[0] : undefined}
         />

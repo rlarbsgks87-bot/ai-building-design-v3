@@ -81,6 +81,12 @@ interface AdjacentRoad {
   center: { lng: number; lat: number }
 }
 
+interface KakaoRoad {
+  direction: 'north' | 'south' | 'east' | 'west'
+  road_name: string  // 도로명 (예: '연북로')
+  road_address: string  // 전체 도로명 주소
+}
+
 interface LandInfo {
   pnu: string
   address: string
@@ -95,7 +101,8 @@ interface LandInfo {
     depth: number
   }
   polygon?: [number, number][]  // [lng, lat][] 지적도 폴리곤 좌표
-  adjacentRoads?: AdjacentRoad[]  // 인접 도로 데이터
+  adjacentRoads?: AdjacentRoad[]  // 인접 도로 데이터 (VWorld 지적도)
+  kakaoRoads?: KakaoRoad[]  // 도로명 정보 (Kakao API fallback)
 }
 
 type TabType = 'config' | 'floors' | 'sunlight' | 'profit' | 'compare'
@@ -161,13 +168,20 @@ function DesignPageContent() {
             console.warn('Failed to fetch parcel geometry, using square approximation:', geomError)
           }
 
-          // 인접 도로 데이터 가져오기 (지적도 기반)
+          // 인접 도로 데이터 가져오기 (지적도 + 카카오 fallback)
           let adjacentRoads: AdjacentRoad[] | undefined
+          let kakaoRoads: KakaoRoad[] | undefined
           try {
             const roadsResponse = await landApi.getAdjacentRoads(pnu)
-            if (roadsResponse.success && roadsResponse.roads) {
-              adjacentRoads = roadsResponse.roads
-              console.log('Adjacent roads loaded:', adjacentRoads.length, 'roads')
+            if (roadsResponse.success) {
+              if (roadsResponse.roads && roadsResponse.roads.length > 0) {
+                adjacentRoads = roadsResponse.roads
+                console.log('VWorld roads loaded:', adjacentRoads.length, 'roads')
+              }
+              if (roadsResponse.kakao_roads && roadsResponse.kakao_roads.length > 0) {
+                kakaoRoads = roadsResponse.kakao_roads
+                console.log('Kakao roads loaded:', kakaoRoads.map(r => r.road_name).join(', '))
+              }
             }
           } catch (roadsError) {
             console.warn('Failed to fetch adjacent roads:', roadsError)
@@ -185,6 +199,7 @@ function DesignPageContent() {
             dimensions: dimensions,
             polygon: polygon,
             adjacentRoads: adjacentRoads,
+            kakaoRoads: kakaoRoads,
           })
         }
       } catch (error) {
@@ -646,6 +661,7 @@ function DesignPageContent() {
             landDimensions={landInfo.dimensions}
             landPolygon={landInfo.polygon}
             adjacentRoads={landInfo.adjacentRoads}
+            kakaoRoads={landInfo.kakaoRoads}
             useZone={landInfo.useZone}
             showNorthSetback={true}
             floorSetbacks={currentFloorSetbacks}
