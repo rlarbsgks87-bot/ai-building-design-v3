@@ -42,6 +42,11 @@ export interface SearchResult {
   road_address: string
   x: number
   y: number
+  pnu?: string
+  sido?: string
+  sigungu?: string
+  dong?: string
+  jibun?: string
 }
 
 export interface BuildingInfo {
