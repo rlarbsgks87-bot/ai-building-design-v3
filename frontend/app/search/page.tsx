@@ -597,10 +597,18 @@ function SearchPageContent() {
                           )}
                           <div className="space-y-2">
                             <InfoRow label="주용도" value={bldg.main_purpose || '-'} highlight />
-                            <InfoRow label="연면적" value={bldg.total_area ? `${bldg.total_area.toLocaleString()}m²` : '-'} />
+                            {bldg.etc_purpose && <InfoRow label="기타용도" value={bldg.etc_purpose} />}
+                            <InfoRow label="구조" value={bldg.structure || '-'} />
+                            <InfoRow label="대지면적" value={bldg.plat_area ? `${bldg.plat_area.toLocaleString()}m²` : '-'} />
                             <InfoRow label="건축면적" value={bldg.building_area ? `${bldg.building_area.toLocaleString()}m²` : '-'} />
+                            <InfoRow label="연면적" value={bldg.total_area ? `${bldg.total_area.toLocaleString()}m²` : '-'} />
+                            <InfoRow label="용적률산정연면적" value={bldg.vl_rat_estm_area ? `${bldg.vl_rat_estm_area.toLocaleString()}m²` : '-'} />
+                            <InfoRow label="건폐율" value={bldg.bc_rat ? `${bldg.bc_rat.toFixed(2)}%` : '-'} highlight />
+                            <InfoRow label="용적률" value={bldg.vl_rat ? `${bldg.vl_rat.toFixed(2)}%` : '-'} highlight />
+                            <InfoRow label="높이" value={bldg.height ? `${bldg.height}m` : '-'} />
                             <InfoRow label="층수" value={`지상 ${bldg.floors.above}층${bldg.floors.below > 0 ? `, 지하 ${bldg.floors.below}층` : ''}`} />
-                            <InfoRow label="주차대수" value={bldg.parking_count ? `${bldg.parking_count}대` : '-'} />
+                            <InfoRow label="세대수" value={bldg.household_count ? `${bldg.household_count}세대` : '-'} />
+                            <InfoRow label="주차대수" value={(bldg.parking?.total || bldg.parking_count) ? `${bldg.parking?.total || bldg.parking_count}대` : '-'} />
                             <InfoRow label="사용승인일" value={bldg.approval_date ? `${bldg.approval_date.slice(0,4)}-${bldg.approval_date.slice(4,6)}-${bldg.approval_date.slice(6,8)}` : '-'} />
                           </div>
                         </div>

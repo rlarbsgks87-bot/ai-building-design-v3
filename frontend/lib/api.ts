@@ -52,13 +52,28 @@ export interface SearchResult {
 export interface BuildingInfo {
   name: string | null
   main_purpose: string
+  etc_purpose?: string | null
   total_area: number
   building_area: number
+  plat_area?: number
+  vl_rat_estm_area?: number
+  bc_rat?: number
+  vl_rat?: number
+  height?: number
+  structure?: string | null
   floors: {
     above: number
     below: number
   }
+  parking?: {
+    indoor_mechanical: number
+    outdoor_mechanical: number
+    indoor_auto: number
+    outdoor_auto: number
+    total: number
+  }
   parking_count: number
+  household_count?: number
   approval_date: string | null
 }
 

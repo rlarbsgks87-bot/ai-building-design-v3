@@ -81,13 +81,28 @@ class DataGoKrService:
                     buildings.append({
                         'name': item.get('bldNm') or None,
                         'main_purpose': item.get('mainPurpsCdNm'),
+                        'etc_purpose': item.get('etcPurps') or None,
                         'total_area': float(item.get('totArea', 0)),
                         'building_area': float(item.get('archArea', 0)),
+                        'plat_area': float(item.get('platArea', 0)),
+                        'vl_rat_estm_area': float(item.get('vlRatEstmTotArea', 0)),
+                        'bc_rat': float(item.get('bcRat', 0)),
+                        'vl_rat': float(item.get('vlRat', 0)),
+                        'height': float(item.get('heit', 0)),
+                        'structure': item.get('strctCdNm') or None,
                         'floors': {
                             'above': int(item.get('grndFlrCnt', 0)),
                             'below': int(item.get('ugrndFlrCnt', 0)),
                         },
+                        'parking': {
+                            'indoor_mechanical': int(item.get('indrMechUtcnt', 0)),
+                            'outdoor_mechanical': int(item.get('oudrMechUtcnt', 0)),
+                            'indoor_auto': int(item.get('indrAutoUtcnt', 0)),
+                            'outdoor_auto': int(item.get('oudrAutoUtcnt', 0)),
+                            'total': int(item.get('indrMechUtcnt', 0)) + int(item.get('oudrMechUtcnt', 0)) + int(item.get('indrAutoUtcnt', 0)) + int(item.get('oudrAutoUtcnt', 0)),
+                        },
                         'parking_count': int(item.get('pkngCnt', 0)),
+                        'household_count': int(item.get('hhldCnt', 0)),
                         'approval_date': item.get('useAprDay'),
                     })
 
