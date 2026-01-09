@@ -93,20 +93,65 @@ function DesignPageContent() {
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [autoSunlight, setAutoSunlight] = useState(true) // 일조권 자동 적용 모드
   const [currentFloorSetbacks, setCurrentFloorSetbacks] = useState<number[]>([]) // 층별 이격거리
+  const [isLoadingLand, setIsLoadingLand] = useState(true)
 
-  // Sample land info
-  const [landInfo] = useState<LandInfo>({
-    pnu: searchParams.get('pnu') || '5011010300112580001',
-    address: searchParams.get('address') || '제주특별자치도 제주시 이도일동 1258-1',
-    area: 330.5,
-    useZone: '제2종일반주거지역',
+  // URL에서 파라미터 추출
+  const pnu = searchParams.get('pnu') || ''
+  const address = decodeURIComponent(searchParams.get('address') || '')
+
+  // Land info - API에서 가져온 실제 데이터
+  const [landInfo, setLandInfo] = useState<LandInfo>({
+    pnu: pnu,
+    address: address,
+    area: 0,
+    useZone: '',
     maxCoverage: 60,
     maxFar: 200,
     heightLimit: null,
-    landPrice: 2500000,
+    landPrice: 0,
   })
 
-  // Building alternatives
+  // API에서 토지 정보 가져오기
+  useEffect(() => {
+    const fetchLandData = async () => {
+      if (!pnu) {
+        setIsLoadingLand(false)
+        return
+      }
+
+      setIsLoadingLand(true)
+      try {
+        // 토지 상세 정보 가져오기
+        const detailResponse = await landApi.getDetail(pnu)
+        if (detailResponse.success && detailResponse.data) {
+          const detail = detailResponse.data
+
+          // 법규 정보 가져오기
+          const regResponse = await landApi.getRegulation(pnu)
+          const regulation = regResponse.success ? regResponse.data : null
+
+          setLandInfo({
+            pnu: pnu,
+            address: address || detail.address_jibun || '',
+            area: detail.parcel_area || 0,
+            useZone: detail.use_zone || '',
+            maxCoverage: regulation?.coverage || 60,
+            maxFar: regulation?.far || 200,
+            heightLimit: regulation?.height_limit ? parseInt(regulation.height_limit) : null,
+            landPrice: detail.official_land_price || 0,
+          })
+        }
+      } catch (error) {
+        console.error('Failed to fetch land data:', error)
+      } finally {
+        setIsLoadingLand(false)
+      }
+    }
+
+    fetchLandData()
+  }, [pnu, address])
+
+  // Building alternatives - 초기값 (landInfo 로드 후 재계산됨)
   const [alternatives, setAlternatives] = useState<BuildingConfig[]>([
     {
       id: '1',
@@ -114,12 +159,12 @@ function DesignPageContent() {
       floors: 5,
       floorHeight: 3.3,
       setbacks: { front: 3, back: 2, left: 1.5, right: 1.5 },
-      buildingArea: 180,
-      totalFloorArea: 850,
-      coverageRatio: 54.5,
-      farRatio: 180,
-      estimatedCost: 2125000000,
-      estimatedRevenue: 2890000000,
+      buildingArea: 0,
+      totalFloorArea: 0,
+      coverageRatio: 0,
+      farRatio: 0,
+      estimatedCost: 0,
+      estimatedRevenue: 0,
     },
     {
       id: '2',
@@ -127,12 +172,12 @@ function DesignPageContent() {
       floors: 7,
       floorHeight: 3.0,
       setbacks: { front: 4, back: 3, left: 2, right: 2 },
-      buildingArea: 150,
-      totalFloorArea: 980,
-      coverageRatio: 45.4,
-      farRatio: 196,
-      estimatedCost: 2450000000,
-      estimatedRevenue: 3330000000,
+      buildingArea: 0,
+      totalFloorArea: 0,
+      coverageRatio: 0,
+      farRatio: 0,
+      estimatedCost: 0,
+      estimatedRevenue: 0,
     },
     {
       id: '3',
@@ -140,14 +185,45 @@ function DesignPageContent() {
       floors: 3,
       floorHeight: 3.5,
       setbacks: { front: 2, back: 1.5, left: 1, right: 1 },
-      buildingArea: 198,
-      totalFloorArea: 560,
-      coverageRatio: 59.9,
-      farRatio: 169,
-      estimatedCost: 1400000000,
-      estimatedRevenue: 1904000000,
+      buildingArea: 0,
+      totalFloorArea: 0,
+      coverageRatio: 0,
+      farRatio: 0,
+      estimatedCost: 0,
+      estimatedRevenue: 0,
     },
   ])
+
+  // 토지 정보가 로드되면 건물 대안 재계산
+  useEffect(() => {
+    if (landInfo.area <= 0) return
+
+    const landSide = Math.sqrt(landInfo.area)
+    const COST_PER_SQM = 2500000 // 건축비 250만원/m²
+    const REVENUE_PER_SQM = 3400000 // 분양가 340만원/m²
+
+    const recalculate = (alt: BuildingConfig): BuildingConfig => {
+      // 가용 면적 계산
+      const availableWidth = landSide - alt.setbacks.left - alt.setbacks.right
+      const availableDepth = landSide - alt.setbacks.front - alt.setbacks.back
+      const buildingArea = Math.max(0, availableWidth * availableDepth)
+      const totalFloorArea = buildingArea * alt.floors
+      const coverageRatio = (buildingArea / landInfo.area) * 100
+      const farRatio = (totalFloorArea / landInfo.area) * 100
+
+      return {
+        ...alt,
+        buildingArea: Math.round(buildingArea * 10) / 10,
+        totalFloorArea: Math.round(totalFloorArea * 10) / 10,
+        coverageRatio: Math.round(coverageRatio * 10) / 10,
+        farRatio: Math.round(farRatio * 10) / 10,
+        estimatedCost: Math.round(totalFloorArea * COST_PER_SQM),
+        estimatedRevenue: Math.round(totalFloorArea * REVENUE_PER_SQM),
+      }
+    }
+
+    setAlternatives(prev => prev.map(recalculate))
+  }, [landInfo.area])
 
   const currentBuilding = alternatives[selectedAlternative]
 
@@ -407,24 +483,33 @@ function DesignPageContent() {
           {/* Land Info Summary */}
           <div className="p-4 bg-gradient-to-r from-blue-900/50 to-gray-800 border-b border-gray-700">
             <h2 className="text-white font-bold mb-2">대지 정보</h2>
-            <div className="grid grid-cols-2 gap-2 text-sm">
-              <div>
-                <span className="text-gray-400">면적</span>
-                <span className="text-white ml-2">{landInfo.area}m²</span>
+            {isLoadingLand ? (
+              <div className="flex items-center gap-2 text-gray-400">
+                <div className="animate-spin h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full"></div>
+                <span>토지 정보 로딩 중...</span>
               </div>
-              <div>
-                <span className="text-gray-400">용도</span>
-                <span className="text-white ml-2">{landInfo.useZone}</span>
+            ) : landInfo.area > 0 ? (
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div>
+                  <span className="text-gray-400">면적</span>
+                  <span className="text-white ml-2">{landInfo.area.toLocaleString()}m²</span>
+                </div>
+                <div>
+                  <span className="text-gray-400">용도</span>
+                  <span className="text-white ml-2 text-xs">{landInfo.useZone || '-'}</span>
+                </div>
+                <div>
+                  <span className="text-gray-400">건폐율</span>
+                  <span className="text-green-400 ml-2">{landInfo.maxCoverage}%</span>
+                </div>
+                <div>
+                  <span className="text-gray-400">용적률</span>
+                  <span className="text-green-400 ml-2">{landInfo.maxFar}%</span>
+                </div>
               </div>
-              <div>
-                <span className="text-gray-400">건폐율</span>
-                <span className="text-green-400 ml-2">{landInfo.maxCoverage}%</span>
-              </div>
-              <div>
-                <span className="text-gray-400">용적률</span>
-                <span className="text-green-400 ml-2">{landInfo.maxFar}%</span>
-              </div>
-            </div>
+            ) : (
+              <p className="text-yellow-400 text-sm">토지 정보를 불러올 수 없습니다</p>
+            )}
           </div>
 
           {/* Alternative Selector */}
