@@ -42,26 +42,34 @@ class DataGoKrService:
             return cached
 
         try:
-            # PNU에서 코드 추출
+            # PNU 구조 (19자리): 시군구(5) + 법정동(5) + 대지구분(1) + 본번(4) + 부번(4)
             sigungu_cd = pnu[:5]
             bjdong_cd = pnu[5:10]
-            bun = pnu[11:15] if len(pnu) > 15 else pnu[10:14]
-            ji = pnu[15:19] if len(pnu) > 15 else pnu[14:18]
+            bun = pnu[11:15] if len(pnu) >= 15 else '0000'
+            ji = pnu[15:19] if len(pnu) >= 19 else '0000'
 
             url = f"{self.BASE_URL}/BldRgstHubService/getBrTitleInfo"
-            params = {
-                'serviceKey': self.api_key,
-                'sigunguCd': sigungu_cd,
-                'bjdongCd': bjdong_cd,
-                'bun': bun,
-                'ji': ji,
-                'numOfRows': 10,
-                'pageNo': 1,
-                '_type': 'json',
-            }
 
-            response = requests.get(url, params=params, timeout=self.timeout)
-            data = response.json()
+            # platGbCd=0 (일반)으로 먼저 시도, 없으면 1 (산)으로 재시도
+            for plat_gb_cd in ['0', '1']:
+                params = {
+                    'serviceKey': self.api_key,
+                    'sigunguCd': sigungu_cd,
+                    'bjdongCd': bjdong_cd,
+                    'platGbCd': plat_gb_cd,
+                    'bun': bun,
+                    'ji': ji,
+                    'numOfRows': 10,
+                    'pageNo': 1,
+                    '_type': 'json',
+                }
+
+                response = requests.get(url, params=params, timeout=self.timeout)
+                data = response.json()
+
+                items = data.get('response', {}).get('body', {}).get('items', {}).get('item', [])
+                if items:
+                    break  # 데이터가 있으면 루프 종료
 
             items = data.get('response', {}).get('body', {}).get('items', {}).get('item', [])
             if not isinstance(items, list):
