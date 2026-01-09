@@ -103,6 +103,130 @@ function convertPolygonToLocal(polygon: [number, number][]): { points: [number, 
   return { points, center: [centerLng, centerLat] }
 }
 
+// 폴리곤 내부 축소 (Polygon Offset) - 이격거리 적용
+function offsetPolygon(points: [number, number][], offset: number): [number, number][] {
+  if (points.length < 3 || offset <= 0) return points
+
+  const result: [number, number][] = []
+  const n = points.length
+
+  for (let i = 0; i < n; i++) {
+    const prev = points[(i - 1 + n) % n]
+    const curr = points[i]
+    const next = points[(i + 1) % n]
+
+    // 현재 점에서 이전/다음 점으로의 벡터
+    const v1 = [curr[0] - prev[0], curr[1] - prev[1]]
+    const v2 = [next[0] - curr[0], next[1] - curr[1]]
+
+    // 법선 벡터 (내부 방향)
+    const len1 = Math.sqrt(v1[0] * v1[0] + v1[1] * v1[1])
+    const len2 = Math.sqrt(v2[0] * v2[0] + v2[1] * v2[1])
+    if (len1 === 0 || len2 === 0) continue
+
+    const n1 = [v1[1] / len1, -v1[0] / len1]  // 첫 번째 변의 법선
+    const n2 = [v2[1] / len2, -v2[0] / len2]  // 두 번째 변의 법선
+
+    // 평균 법선 (꼭지점 이동 방향)
+    const avgNx = (n1[0] + n2[0]) / 2
+    const avgNy = (n1[1] + n2[1]) / 2
+    const avgLen = Math.sqrt(avgNx * avgNx + avgNy * avgNy)
+
+    if (avgLen > 0) {
+      // 꼭지점 각도에 따른 보정 (예각일수록 더 많이 이동)
+      const dot = n1[0] * n2[0] + n1[1] * n2[1]
+      const scale = 1 / Math.max(avgLen, 0.5)  // 너무 큰 이동 방지
+
+      result.push([
+        curr[0] - avgNx * scale * offset,
+        curr[1] - avgNy * scale * offset
+      ])
+    } else {
+      result.push(curr)
+    }
+  }
+
+  return result
+}
+
+// 폴리곤 내 최대 내접 사각형 계산 (근사)
+function getMaxInscribedRect(points: [number, number][]): {
+  centerX: number
+  centerZ: number
+  width: number
+  depth: number
+} {
+  if (points.length < 3) {
+    return { centerX: 0, centerZ: 0, width: 10, depth: 10 }
+  }
+
+  // 폴리곤 중심 계산
+  let sumX = 0, sumZ = 0
+  for (const [x, z] of points) {
+    sumX += x
+    sumZ += z
+  }
+  const centerX = sumX / points.length
+  const centerZ = sumZ / points.length
+
+  // 중심에서 각 방향으로 경계까지 거리 측정 (Ray Casting)
+  const directions = [
+    [1, 0],   // 동쪽 (+X)
+    [-1, 0],  // 서쪽 (-X)
+    [0, 1],   // 북쪽 (+Z)
+    [0, -1],  // 남쪽 (-Z)
+  ]
+
+  const distances: number[] = []
+
+  for (const [dx, dz] of directions) {
+    let minDist = Infinity
+
+    // 각 변과의 교차점 찾기
+    for (let i = 0; i < points.length; i++) {
+      const p1 = points[i]
+      const p2 = points[(i + 1) % points.length]
+
+      // 광선과 선분의 교차 계산
+      const dist = raySegmentIntersect(centerX, centerZ, dx, dz, p1, p2)
+      if (dist !== null && dist > 0 && dist < minDist) {
+        minDist = dist
+      }
+    }
+
+    distances.push(minDist === Infinity ? 50 : minDist)
+  }
+
+  // 동서남북 거리로 사각형 크기 결정
+  const width = Math.min(distances[0], distances[1]) * 2  // 좌우 중 작은 값 * 2
+  const depth = Math.min(distances[2], distances[3]) * 2  // 상하 중 작은 값 * 2
+
+  return { centerX, centerZ, width, depth }
+}
+
+// 광선-선분 교차 계산
+function raySegmentIntersect(
+  ox: number, oz: number,  // 광선 원점
+  dx: number, dz: number,  // 광선 방향
+  p1: [number, number],    // 선분 시작점
+  p2: [number, number]     // 선분 끝점
+): number | null {
+  const x1 = p1[0], z1 = p1[1]
+  const x2 = p2[0], z2 = p2[1]
+
+  const denominator = dx * (z2 - z1) - dz * (x2 - x1)
+  if (Math.abs(denominator) < 0.0001) return null
+
+  const t = ((x1 - ox) * (z2 - z1) - (z1 - oz) * (x2 - x1)) / denominator
+  const u = ((x1 - ox) * dz - (z1 - oz) * dx) / denominator
+
+  if (t >= 0 && u >= 0 && u <= 1) {
+    return t
+  }
+
+  return null
+}
+
 // 대지 크기 계산 (실제 dimensions가 있으면 사용, 없으면 정사각형 가정)
 function calculateLandDimensions(area: number, dimensions?: { width: number; depth: number }) {
   if (dimensions && dimensions.width > 0 && dimensions.depth > 0) {
@@ -141,9 +265,10 @@ const FLOOR_COLORS = {
 }
 
 // 건물 매스 컴포넌트 (계단형 매스 지원)
-function BuildingMass({ building, landDimensions, floorSetbacks, useZone }: {
+function BuildingMass({ building, landDimensions, landPolygon, floorSetbacks, useZone }: {
   building: BuildingConfig
   landDimensions: { width: number; depth: number }
+  landPolygon?: [number, number][]  // [lng, lat][] 지적도 폴리곤 좌표
   floorSetbacks?: number[]  // 층별 북측 이격거리
   useZone?: string
 }) {
@@ -157,9 +282,30 @@ function BuildingMass({ building, landDimensions, floorSetbacks, useZone }: {
     ? floorSetbacks[0]
     : building.setbacks.back
 
-  // 건물 가용 영역 계산
-  const availableWidth = landWidth - building.setbacks.left - building.setbacks.right
-  const availableDepth = landDepth - building.setbacks.front - baseBackSetback
+  // 평균 이격거리 (폴리곤 축소용)
+  const avgSetback = (building.setbacks.front + baseBackSetback + building.setbacks.left + building.setbacks.right) / 4
+
+  // 폴리곤 좌표를 로컬 좌표로 변환 후 이격거리 적용
+  const buildableArea = useMemo(() => {
+    if (landPolygon && landPolygon.length >= 3) {
+      const localPolygon = convertPolygonToLocal(landPolygon)
+      if (localPolygon.points.length >= 3) {
+        // 이격거리 적용된 내부 폴리곤
+        const shrunkPolygon = offsetPolygon(localPolygon.points, avgSetback)
+        // 최대 내접 사각형 계산
+        return getMaxInscribedRect(shrunkPolygon)
+      }
+    }
+    return null
+  }, [landPolygon, avgSetback])
+
+  // 건물 가용 영역 계산 (폴리곤 기반 또는 bounding box 기반)
+  const availableWidth = buildableArea
+    ? buildableArea.width
+    : landWidth - building.setbacks.left - building.setbacks.right
+  const availableDepth = buildableArea
+    ? buildableArea.depth
+    : landDepth - building.setbacks.front - baseBackSetback
   const rawBuildingArea = availableWidth * availableDepth
 
   // 건물 크기를 실제 buildingArea에 맞게 조정 (법정 한도 반영)
@@ -174,16 +320,14 @@ function BuildingMass({ building, landDimensions, floorSetbacks, useZone }: {
   // 건물 높이 계산
   const buildingHeight = building.floors * building.floorHeight
 
-  // 건물 중심 위치 계산
-  // X: 좌우 이격거리 차이 반영
-  const centerX = (building.setbacks.left - building.setbacks.right) / 2
+  // 건물 중심 위치 계산 (폴리곤 기반 또는 bounding box 기반)
+  const centerX = buildableArea
+    ? buildableArea.centerX
+    : (building.setbacks.left - building.setbacks.right) / 2
   // Z: 전면 이격거리부터 시작해서 가용 깊이의 중앙 (북쪽이 +Z)
-  // 전면(남쪽) 경계: -landDepth/2 + front
-  // 후면(북쪽) 경계: landDepth/2 - back
-  // 건물 시작점(남쪽): -landDepth/2 + front
-  // 건물 끝점(북쪽): landDepth/2 - back (1층 기준)
-  // 건물 중심 Z = 전면경계 + 가용깊이/2 = -landDepth/2 + front + availableDepth/2
-  const baseCenterZ = -landDepth / 2 + building.setbacks.front + availableDepth / 2
+  const baseCenterZ = buildableArea
+    ? buildableArea.centerZ
+    : -landDepth / 2 + building.setbacks.front + availableDepth / 2
 
   // 층별 데이터 생성 (계단형 매스)
   const floors = useMemo(() => {
@@ -195,17 +339,36 @@ function BuildingMass({ building, landDimensions, floorSetbacks, useZone }: {
       const floorNum = i + 1
       const floorTopHeight = floorNum * building.floorHeight
 
-      // 해당 층의 북측 이격거리
+      // 해당 층의 북측 이격거리 (계단형이 아닌 경우에만 층별 변동)
       let backSetback = baseBackSetback
       if (isSteppedBuilding && floorSetbacks && floorSetbacks[i] !== undefined) {
         backSetback = floorSetbacks[i]
-      } else if (isResidential) {
+      } else if (isResidential && !buildableArea) {
+        // 폴리곤 기반이 아닐 때만 층별 일조권 적용
         backSetback = getNorthSetbackAtHeight(floorTopHeight, building.setbacks.back)
       }
 
-      // 해당 층의 깊이 계산 (areaRatio 적용)
-      const floorAvailableDepth = landDepth - building.setbacks.front - backSetback
-      const floorDepth = Math.max(1, floorAvailableDepth * areaRatio)
+      // 해당 층의 깊이 계산
+      let floorDepth: number
+      let floorCenterZ: number
+
+      if (buildableArea) {
+        // 폴리곤 기반: 내접 사각형 기준으로 계산
+        // 계단형일 때 상층부 축소 반영
+        const depthReduction = isSteppedBuilding && backSetback > baseBackSetback
+          ? (backSetback - baseBackSetback)
+          : 0
+        floorDepth = Math.max(1, (availableDepth - depthReduction) * areaRatio)
+        // 중심 위치: 축소된 만큼 남쪽(-)으로 이동
+        floorCenterZ = baseCenterZ - depthReduction / 2
+      } else {
+        // bounding box 기반
+        const floorAvailableDepth = landDepth - building.setbacks.front - backSetback
+        floorDepth = Math.max(1, floorAvailableDepth * areaRatio)
+        // 이 층의 중심 Z 위치
+        const floorStartZ = -landDepth / 2 + building.setbacks.front
+        floorCenterZ = floorStartZ + floorDepth / 2
+      }
 
       // 색상 및 라벨
       let color: string
@@ -221,11 +384,6 @@ function BuildingMass({ building, landDimensions, floorSetbacks, useZone }: {
         label = '주거'
       }
 
-      // 이 층의 중심 Z 위치
-      // 각 층은 전면(남쪽)에서 시작해서 북쪽으로 해당 층의 깊이만큼
-      const floorStartZ = -landDepth / 2 + building.setbacks.front
-      const floorCenterZ = floorStartZ + floorDepth / 2
-
       result.push({
         floor: floorNum,
         color,
@@ -238,7 +396,7 @@ function BuildingMass({ building, landDimensions, floorSetbacks, useZone }: {
       })
     }
     return result
-  }, [building, buildingWidth, floorSetbacks, landDepth, useZone, isSteppedBuilding, baseBackSetback, areaRatio])
+  }, [building, buildingWidth, floorSetbacks, landDepth, useZone, isSteppedBuilding, baseBackSetback, areaRatio, buildableArea, availableDepth, baseCenterZ])
 
   return (
     <group position={[centerX, 0, 0]}>
@@ -392,6 +550,9 @@ function LandBoundary({
     back: actualBackSetback ?? setbacks.back,
   }
 
+  // 평균 이격거리 계산 (폴리곤 축소용)
+  const avgSetback = (displaySetbacks.front + displaySetbacks.back + displaySetbacks.left + displaySetbacks.right) / 4
+
   // 폴리곤 좌표를 로컬 좌표로 변환
   const localPolygon = useMemo(() => {
     if (landPolygon && landPolygon.length >= 3) {
@@ -399,6 +560,14 @@ function LandBoundary({
     }
     return null
   }, [landPolygon])
+
+  // 이격거리 적용된 내부 폴리곤 (실제 폴리곤 형상을 따름)
+  const offsetPolygonPoints = useMemo(() => {
+    if (localPolygon && localPolygon.points.length >= 3) {
+      return offsetPolygon(localPolygon.points, avgSetback)
+    }
+    return null
+  }, [localPolygon, avgSetback])
 
   // 폴리곤 Shape 생성 (Three.js용)
   // 주의: Shape는 XY 평면에서 생성 후 -90도 회전하여 XZ 평면에 배치
@@ -438,6 +607,25 @@ function LandBoundary({
     ]
   }, [localPolygon, width, depth])
 
+  // 이격선 포인트 (폴리곤 형상을 따름)
+  const setbackLinePoints: [number, number, number][] = useMemo(() => {
+    if (offsetPolygonPoints && offsetPolygonPoints.length >= 3) {
+      const pts = offsetPolygonPoints.map(([x, z]) => [x, 0.03, z] as [number, number, number])
+      if (pts.length > 0) {
+        pts.push([...pts[0]])
+      }
+      return pts
+    }
+    // fallback: 사각형 (bounding box 기준)
+    return [
+      [-width / 2 + displaySetbacks.left, 0.03, -depth / 2 + displaySetbacks.front],
+      [width / 2 - displaySetbacks.right, 0.03, -depth / 2 + displaySetbacks.front],
+      [width / 2 - displaySetbacks.right, 0.03, depth / 2 - displaySetbacks.back],
+      [-width / 2 + displaySetbacks.left, 0.03, depth / 2 - displaySetbacks.back],
+      [-width / 2 + displaySetbacks.left, 0.03, -depth / 2 + displaySetbacks.front],
+    ]
+  }, [offsetPolygonPoints, width, depth, displaySetbacks])
+
   // 모서리 포인트
   const cornerPoints: [number, number, number][] = useMemo(() => {
     if (localPolygon && localPolygon.points.length >= 3) {
@@ -473,8 +661,35 @@ function LandBoundary({
         lineWidth={3}
       />
 
-      {/* 이격거리 표시 - 폴리곤/사각형 모두 표시 (bounding box 기준) */}
-      <SetbackLines landDimensions={landDimensions} setbacks={displaySetbacks} />
+      {/* 이격거리 표시 - 폴리곤 형상을 따르는 내부 경계선 */}
+      <Line
+        points={setbackLinePoints}
+        color="#f59e0b"
+        lineWidth={2}
+        dashed
+        dashSize={0.5}
+        gapSize={0.3}
+      />
+
+      {/* 이격거리 라벨 */}
+      <Text
+        position={[0, 0.5, -depth / 2 + displaySetbacks.front / 2]}
+        fontSize={0.8}
+        color="#f59e0b"
+        anchorX="center"
+        rotation={[-Math.PI / 2, 0, 0]}
+      >
+        {`전면 ${displaySetbacks.front}m`}
+      </Text>
+      <Text
+        position={[0, 0.5, depth / 2 - displaySetbacks.back / 2]}
+        fontSize={0.8}
+        color="#f59e0b"
+        anchorX="center"
+        rotation={[-Math.PI / 2, 0, 0]}
+      >
+        {`북측 ${displaySetbacks.back}m`}
+      </Text>
 
       {/* 대지 모서리 포인트 */}
       {cornerPoints.map((pos, i) => (
@@ -1329,10 +1544,11 @@ export function MassViewer3D({ building, landArea, landDimensions: propLandDimen
           actualBackSetback={floorSetbacks && floorSetbacks.length > 0 ? floorSetbacks[0] : undefined}
         />
 
-        {/* 건물 매스 (계단형 지원) */}
+        {/* 건물 매스 (계단형 지원) - 폴리곤 기반 배치 */}
         <BuildingMass
           building={building}
           landDimensions={landDimensions}
+          landPolygon={landPolygon}
           floorSetbacks={floorSetbacks}
           useZone={useZone}
         />
