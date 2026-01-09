@@ -609,28 +609,17 @@ class VWorldService:
         return {'success': False, 'data': [], 'error': geocode_result.get('error', '주소를 찾을 수 없습니다')}
 
     def get_parcel_by_point(self, x: float, y: float) -> dict:
-        """좌표로 필지 조회 (VWorld reverse geocoding 사용)"""
+        """좌표로 필지 조회 (Lambda 프록시를 통한 reverse geocoding)"""
         cache_key = f"parcel_point:{x:.6f}_{y:.6f}"
         cached = cache.get(cache_key)
         if cached:
             return cached
 
         try:
-            # VWorld reverse geocoding API
-            params = {
-                'service': 'address',
-                'request': 'getAddress',
-                'version': '2.0',
-                'crs': 'EPSG:4326',
-                'point': f'{x},{y}',
-                'type': 'PARCEL',
-                'format': 'json',
-                'key': self.api_key,
-            }
-
-            response = requests.get(
-                'https://api.vworld.kr/req/address',
-                params=params,
+            # Lambda 프록시를 통해 reverse geocoding 호출
+            response = requests.post(
+                self.lambda_proxy.base_url,
+                json={'type': 'reverse', 'x': x, 'y': y},
                 timeout=15
             )
 
@@ -638,11 +627,10 @@ class VWorldService:
             try:
                 data = response.json()
             except Exception:
-                # VWorld API가 HTML 에러 반환 시
-                return {'success': False, 'error': f'VWorld API 응답 오류: {response.text[:200]}'}
+                return {'success': False, 'error': f'Lambda 프록시 응답 오류: {response.text[:200]}'}
 
-            status = data.get('response', {}).get('status')
-            if status == 'OK':
+            # Lambda 프록시 응답 파싱
+            if data.get('response', {}).get('status') == 'OK':
                 results = data['response'].get('result', [])
                 if results:
                     result_item = results[0]
@@ -673,9 +661,9 @@ class VWorldService:
                     cache.set(cache_key, result, 3600)
                     return result
 
-            # 디버깅을 위해 실제 에러 메시지 반환
-            error_msg = data.get('response', {}).get('error', {}).get('text', '해당 좌표에 필지 정보가 없습니다')
-            return {'success': False, 'error': f'VWorld API: {status} - {error_msg}'}
+            # 에러 메시지 반환
+            error_msg = data.get('error', data.get('response', {}).get('error', {}).get('text', '해당 좌표에 필지 정보가 없습니다'))
+            return {'success': False, 'error': f'Lambda: {error_msg}'}
 
         except Exception as e:
             return {'success': False, 'error': str(e)}

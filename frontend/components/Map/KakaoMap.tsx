@@ -656,7 +656,7 @@ export function KakaoMap({
           const mainNo = (addr?.main_address_no || '').padStart(4, '0')
           const subNo = (addr?.sub_address_no || '0').padStart(4, '0')
 
-          const pnu = bCode + (mountainYn ? '2' : '1') + mainNo + subNo
+          const pnu = bCode + (mountainYn ? '1' : '0') + mainNo + subNo
 
           onParcelClick?.({
             address_jibun: jibunAddress,
