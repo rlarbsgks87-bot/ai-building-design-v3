@@ -473,7 +473,11 @@ class VWorldService:
             return {'error': str(e)}
 
     def get_land_characteristics(self, pnu: str) -> dict:
-        """토지특성정보 직접 조회 (VWorld Data API)"""
+        """토지특성정보 직접 조회 (VWorld 연속지적도 API)
+
+        연속지적도(LP_PA_CBND_BUBUN)에서 공시지가와 폴리곤을 가져와서
+        면적을 계산합니다.
+        """
         if not self.api_key:
             return {'success': False, 'error': 'VWorld API 키가 없습니다'}
 
@@ -483,41 +487,8 @@ class VWorldService:
             return cached
 
         try:
-            # 토지특성정보 조회
+            # 연속지적도에서 토지 정보 조회 (공시지가, 폴리곤 포함)
             params = {
-                'service': 'data',
-                'request': 'GetFeature',
-                'data': 'LT_C_LHBLPN',
-                'key': self.api_key,
-                'domain': settings.VWORLD_DOMAIN,
-                'attrFilter': f'pnu:=:{pnu}',
-                'format': 'json',
-                'errorformat': 'json',
-                'crs': 'EPSG:4326',
-            }
-
-            response = requests.get(self.DATA_URL, params=params, timeout=15)
-            data = response.json()
-
-            if data.get('response', {}).get('status') == 'OK':
-                features = data['response'].get('result', {}).get('featureCollection', {}).get('features', [])
-                if features:
-                    props = features[0].get('properties', {})
-                    result = {
-                        'success': True,
-                        'area': float(props.get('lndpclAr', 0)),
-                        'land_category': props.get('lndcgrCodeNm', '대'),
-                        'jiga': float(props.get('pblntfPclnd', 0)),
-                        'use_zone': props.get('prposArea1Nm', ''),
-                        'terrain_height': props.get('tpgrphHgCodeNm', '-'),
-                        'terrain_shape': props.get('tpgrphFrmCodeNm', '-'),
-                        'road_side': props.get('roadSideCodeNm', '-'),
-                    }
-                    cache.set(cache_key, result, 604800)  # 7일
-                    return result
-
-            # 연속지적도에서 면적 조회 시도
-            params2 = {
                 'service': 'data',
                 'request': 'GetFeature',
                 'data': 'LP_PA_CBND_BUBUN',
@@ -527,29 +498,101 @@ class VWorldService:
                 'format': 'json',
                 'errorformat': 'json',
                 'crs': 'EPSG:4326',
+                'geometry': 'true',
+                'attribute': 'true',
             }
 
-            response2 = requests.get(self.DATA_URL, params=params2, timeout=15)
-            data2 = response2.json()
+            response = requests.get(self.DATA_URL, params=params, timeout=15)
+            data = response.json()
 
-            if data2.get('response', {}).get('status') == 'OK':
-                features2 = data2['response'].get('result', {}).get('featureCollection', {}).get('features', [])
-                if features2:
-                    props2 = features2[0].get('properties', {})
+            if data.get('response', {}).get('status') == 'OK':
+                features = data['response'].get('result', {}).get('featureCollection', {}).get('features', [])
+                if features:
+                    feature = features[0]
+                    props = feature.get('properties', {})
+                    geometry = feature.get('geometry', {})
+
+                    # 공시지가 추출
+                    jiga = 0
+                    if props.get('jiga'):
+                        try:
+                            jiga = float(props.get('jiga'))
+                        except (ValueError, TypeError):
+                            jiga = 0
+
+                    # 폴리곤에서 면적 계산
+                    area = self._calculate_polygon_area(geometry)
+
+                    # 지목 추출 (예: "290-34대" → "대")
+                    jibun = props.get('jibun', '')
+                    land_category = ''
+                    if jibun:
+                        # 숫자와 '-'를 제외한 마지막 글자가 지목
+                        for char in reversed(jibun):
+                            if not char.isdigit() and char != '-':
+                                land_category = char
+                                break
+
                     result = {
                         'success': True,
-                        'area': float(props2.get('bonbeon', 0)) if props2.get('bonbeon') else 0,
-                        'land_category': props2.get('jibun', ''),
-                        'jiga': 0,
-                        'use_zone': '',
+                        'area': round(area, 2),
+                        'land_category': land_category or '대',
+                        'jiga': jiga,
+                        'use_zone': '',  # 토지이용계획에서 별도 조회
+                        'address': props.get('addr', ''),
                     }
-                    cache.set(cache_key, result, 604800)
+                    cache.set(cache_key, result, 604800)  # 7일
                     return result
 
             return {'success': False, 'error': '토지정보를 찾을 수 없습니다'}
 
         except Exception as e:
             return {'success': False, 'error': str(e)}
+
+    def _calculate_polygon_area(self, geometry: dict) -> float:
+        """폴리곤 좌표에서 면적 계산 (Shoelace formula + WGS84→m² 변환)"""
+        import math
+
+        coords = geometry.get('coordinates', [[]])
+        geom_type = geometry.get('type', '')
+
+        # MultiPolygon 또는 Polygon 처리
+        if geom_type == 'MultiPolygon':
+            polygon_coords = coords[0][0] if coords and coords[0] else []
+        elif geom_type == 'Polygon':
+            polygon_coords = coords[0] if coords else []
+        else:
+            polygon_coords = coords
+
+        if not polygon_coords or len(polygon_coords) < 3:
+            return 0
+
+        # 중심점 계산 (WGS84 → 미터 변환용)
+        lngs = [c[0] for c in polygon_coords]
+        lats = [c[1] for c in polygon_coords]
+        center_lat = sum(lats) / len(lats)
+
+        # WGS84 좌표를 미터로 변환
+        lat_rad = math.radians(center_lat)
+        meters_per_lat = 111320  # 위도 1도 = 약 111km
+        meters_per_lng = 111320 * math.cos(lat_rad)  # 경도 1도 = 111km * cos(위도)
+
+        # 좌표를 미터 단위로 변환
+        coords_m = []
+        for coord in polygon_coords:
+            x_m = coord[0] * meters_per_lng
+            y_m = coord[1] * meters_per_lat
+            coords_m.append((x_m, y_m))
+
+        # Shoelace formula로 면적 계산
+        n = len(coords_m)
+        area = 0.0
+        for i in range(n):
+            j = (i + 1) % n
+            area += coords_m[i][0] * coords_m[j][1]
+            area -= coords_m[j][0] * coords_m[i][1]
+
+        return abs(area) / 2.0
 
     def get_parcel_geometry(self, pnu: str) -> dict:
         """필지 폴리곤 지오메트리 조회 (VWorld 연속지적도)
@@ -959,14 +1002,17 @@ class LandService:
                 parcel_area = cadastral.get('area') or 0
                 jiga = cadastral.get('jiga') or 0
 
+            address_jibun = ''
+
             # Lambda 프록시가 데이터를 반환하지 않으면 다른 API 시도
             if not parcel_area or parcel_area == 0:
-                # 1. VWorld API 직접 호출 시도
+                # 1. VWorld API 직접 호출 시도 (연속지적도 - 공시지가, 면적, 주소 포함)
                 vworld_data = self.vworld.get_land_characteristics(pnu)
                 if vworld_data.get('success') and vworld_data.get('area'):
                     parcel_area = vworld_data.get('area') or 0
                     jiga = vworld_data.get('jiga') or jiga
                     use_zone = vworld_data.get('use_zone') or use_zone
+                    address_jibun = vworld_data.get('address') or ''
 
                 # 2. VWorld도 실패하면 공공데이터포털 API 시도
                 if not parcel_area or parcel_area == 0:
@@ -990,7 +1036,7 @@ class LandService:
 
             land_data = {
                 'pnu': pnu,
-                'address_jibun': '',
+                'address_jibun': address_jibun,
                 'address_road': '',
                 'parcel_area': parcel_area,
                 'use_zone': use_zone,
@@ -1009,6 +1055,7 @@ class LandService:
                 LandCache.objects.update_or_create(
                     pnu=pnu,
                     defaults={
+                        'address_jibun': land_data['address_jibun'],
                         'parcel_area': land_data['parcel_area'],
                         'use_zone': land_data['use_zone'],
                         'official_land_price': land_data['official_land_price'],
