@@ -700,6 +700,8 @@ class LandService:
             cached = LandCache.objects.get(pnu=pnu)
             # parcel_area가 0보다 큰 경우에만 캐시 사용
             if cached.parcel_area and cached.parcel_area > 0:
+                # 건축물대장 정보는 항상 실시간 조회 (캐시 안함)
+                building_info = self.datago.get_building_info(pnu)
                 return {
                     'success': True,
                     'data': {
@@ -711,6 +713,10 @@ class LandService:
                         'official_land_price': cached.official_land_price,
                         'latitude': cached.latitude,
                         'longitude': cached.longitude,
+                        'building': {
+                            'exists': building_info.get('exists', False),
+                            'buildings': building_info.get('buildings', []),
+                        },
                     },
                     'cached': True,
                 }
@@ -752,6 +758,9 @@ class LandService:
             if not use_zone and land_use.get('success'):
                 use_zone = land_use.get('primary_zone', '')
 
+            # 건축물대장 정보 조회
+            building_info = self.datago.get_building_info(pnu)
+
             land_data = {
                 'pnu': pnu,
                 'address_jibun': '',
@@ -761,6 +770,10 @@ class LandService:
                 'official_land_price': jiga,
                 'latitude': y,
                 'longitude': x,
+                'building': {
+                    'exists': building_info.get('exists', False),
+                    'buildings': building_info.get('buildings', []),
+                },
             }
 
             # 캐시 저장 (유효한 데이터만)
