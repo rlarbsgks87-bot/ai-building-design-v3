@@ -737,6 +737,71 @@ function LandBoundary({
         {`북측 ${displaySetbacks.back}m`}
       </Text>
 
+      {/* 도로 표시 (전면/남쪽 방향) */}
+      <group>
+        {/* 도로 평면 */}
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.03, -depth / 2 - 4]} receiveShadow>
+          <planeGeometry args={[width + 6, 8]} />
+          <meshStandardMaterial color="#4a5568" side={THREE.DoubleSide} />
+        </mesh>
+
+        {/* 도로 중앙선 (흰색 점선) */}
+        <Line
+          points={[
+            [-width / 2 - 3, 0.01, -depth / 2 - 4],
+            [width / 2 + 3, 0.01, -depth / 2 - 4],
+          ]}
+          color="#ffffff"
+          lineWidth={2}
+          dashed
+          dashSize={1.5}
+          gapSize={1}
+        />
+
+        {/* 도로 경계선 (대지측) */}
+        <Line
+          points={[
+            [-width / 2 - 3, 0.02, -depth / 2],
+            [width / 2 + 3, 0.02, -depth / 2],
+          ]}
+          color="#9ca3af"
+          lineWidth={2}
+        />
+
+        {/* 도로 라벨 */}
+        <Text
+          position={[0, 0.5, -depth / 2 - 4]}
+          fontSize={1.2}
+          color="#ffffff"
+          anchorX="center"
+          rotation={[-Math.PI / 2, 0, 0]}
+          outlineWidth={0.05}
+          outlineColor="#000000"
+        >
+          도로
+        </Text>
+
+        {/* 도로 방향 화살표 (양방향 통행) */}
+        <Text
+          position={[-width / 2 - 1, 0.5, -depth / 2 - 4]}
+          fontSize={1}
+          color="#ffffff"
+          anchorX="center"
+          rotation={[-Math.PI / 2, 0, 0]}
+        >
+          ←
+        </Text>
+        <Text
+          position={[width / 2 + 1, 0.5, -depth / 2 - 4]}
+          fontSize={1}
+          color="#ffffff"
+          anchorX="center"
+          rotation={[-Math.PI / 2, 0, 0]}
+        >
+          →
+        </Text>
+      </group>
+
       {/* 대지 모서리 포인트 */}
       {cornerPoints.map((pos, i) => (
         <mesh key={i} position={pos}>
@@ -1795,9 +1860,13 @@ export function MassViewer3D({ building, landArea, landDimensions: propLandDimen
           <div className="w-3 h-3 bg-green-500 rounded-sm"></div>
           <span className="text-gray-300">대지 경계</span>
         </div>
-        <div className="flex items-center gap-2 mb-2">
+        <div className="flex items-center gap-2 mb-1">
           <div className="w-3 h-3 bg-amber-500 rounded-sm"></div>
           <span className="text-gray-300">이격거리</span>
+        </div>
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-3 h-3 bg-gray-500 rounded-sm"></div>
+          <span className="text-gray-300">도로</span>
         </div>
         <div className="text-gray-400 text-[10px] mb-2 font-medium">건물 용도</div>
         <div className="flex items-center gap-2 mb-1">
