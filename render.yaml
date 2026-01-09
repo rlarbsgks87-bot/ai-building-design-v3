@@ -1,4 +1,5 @@
 services:
+  # Backend API
   - type: web
     name: ai-building-api
     env: python
@@ -22,3 +23,20 @@ services:
         value: "https://3a9op0tcy6.execute-api.ap-northeast-2.amazonaws.com/prod/"
       - key: DATABASE_URL
         sync: false
+
+  # Frontend
+  - type: web
+    name: ai-building-frontend
+    env: node
+    region: singapore
+    plan: free
+    rootDir: frontend
+    buildCommand: "npm install && npm run build"
+    startCommand: "npm start"
+    envVars:
+      - key: NODE_VERSION
+        value: "18.17.0"
+      - key: NEXT_PUBLIC_API_URL
+        value: "https://ai-building-api-535g.onrender.com/api/v1"
+      - key: NEXT_PUBLIC_KAKAO_MAP_KEY
+        value: "7b745b9c98e7e984666fba573e992049"
