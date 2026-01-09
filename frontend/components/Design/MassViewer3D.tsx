@@ -394,13 +394,16 @@ function LandBoundary({
   }, [landPolygon])
 
   // 폴리곤 Shape 생성 (Three.js용)
+  // 주의: Shape는 XY 평면에서 생성 후 -90도 회전하여 XZ 평면에 배치
+  // 회전 시 Y → -Z 변환되므로, Shape의 Y좌표를 음수로 설정해야 올바른 위치에 렌더링됨
   const landShape = useMemo(() => {
     if (localPolygon && localPolygon.points.length >= 3) {
       const shape = new THREE.Shape()
       const pts = localPolygon.points
-      shape.moveTo(pts[0][0], pts[0][1])
+      // Y좌표(=z)를 음수로 변환하여 회전 후 올바른 위치에 배치
+      shape.moveTo(pts[0][0], -pts[0][1])
       for (let i = 1; i < pts.length; i++) {
-        shape.lineTo(pts[i][0], pts[i][1])
+        shape.lineTo(pts[i][0], -pts[i][1])
       }
       shape.closePath()
       return shape
