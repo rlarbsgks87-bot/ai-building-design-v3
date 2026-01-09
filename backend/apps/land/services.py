@@ -608,6 +608,98 @@ class VWorldService:
 
         return {'success': False, 'data': [], 'error': geocode_result.get('error', '주소를 찾을 수 없습니다')}
 
+    def get_parcel_by_point(self, x: float, y: float) -> dict:
+        """좌표로 필지 조회 (VWorld reverse geocoding 사용)"""
+        cache_key = f"parcel_point:{x:.6f}_{y:.6f}"
+        cached = cache.get(cache_key)
+        if cached:
+            return cached
+
+        try:
+            # VWorld reverse geocoding API
+            params = {
+                'service': 'address',
+                'request': 'getAddress',
+                'version': '2.0',
+                'crs': 'EPSG:4326',
+                'point': f'{x},{y}',
+                'type': 'PARCEL',
+                'format': 'json',
+                'key': self.api_key,
+            }
+
+            response = requests.get(
+                'https://api.vworld.kr/req/address',
+                params=params,
+                timeout=15
+            )
+            data = response.json()
+
+            if data.get('response', {}).get('status') == 'OK':
+                results = data['response'].get('result', [])
+                if results:
+                    result_item = results[0]
+                    structure = result_item.get('structure', {})
+
+                    # 법정동 코드 (10자리)
+                    level4LC = structure.get('level4LC', '')
+                    jibun = structure.get('level5', '')
+
+                    # PNU 생성 (19자리): 법정동코드(10) + 대지구분(1) + 본번(4) + 부번(4)
+                    pnu = self._build_pnu(level4LC, jibun)
+
+                    addr = result_item.get('text', '')
+
+                    result = {
+                        'success': True,
+                        'data': {
+                            'pnu': pnu,
+                            'address': addr,
+                            'jibun': jibun,
+                            'sido': structure.get('level1', ''),
+                            'sigungu': structure.get('level2', ''),
+                            'dong': structure.get('level4L', ''),
+                            'x': x,
+                            'y': y,
+                        }
+                    }
+                    cache.set(cache_key, result, 3600)
+                    return result
+
+            return {'success': False, 'error': '해당 좌표에 필지 정보가 없습니다'}
+
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+    def _build_pnu(self, level4LC: str, jibun: str) -> str:
+        """법정동코드와 지번으로 PNU 생성"""
+        if not level4LC or not jibun:
+            return ''
+
+        # 지번 파싱 (예: "50-11", "195-1", "산50-11")
+        is_san = jibun.startswith('산')
+        jibun_clean = jibun.replace('산', '').strip()
+
+        # 본번-부번 분리
+        if '-' in jibun_clean:
+            parts = jibun_clean.split('-')
+            bun = parts[0]
+            ji = parts[1] if len(parts) > 1 else '0'
+        else:
+            bun = jibun_clean
+            ji = '0'
+
+        # 숫자만 추출
+        bun = ''.join(filter(str.isdigit, bun)) or '0'
+        ji = ''.join(filter(str.isdigit, ji)) or '0'
+
+        # 대지구분: 0(일반), 1(산)
+        plat_gb = '1' if is_san else '0'
+
+        # PNU 조합 (19자리)
+        pnu = f"{level4LC}{plat_gb}{bun.zfill(4)}{ji.zfill(4)}"
+        return pnu
+
 
 class LandService:
     """토지 정보 서비스 (Lambda 프록시 + 공공데이터포털 활용)"""
