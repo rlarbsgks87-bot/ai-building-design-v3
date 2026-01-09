@@ -285,6 +285,55 @@ class LambdaProxyService:
         self.base_url = f"{base}/"
         self.timeout = 15
 
+    def _calculate_polygon_area(self, geometry: dict) -> float:
+        """폴리곤 좌표에서 면적 계산 (Shoelace formula + WGS84→m² 변환)
+
+        cadastral.geometry에서 면적 계산
+        landChar가 없을 때 대체 면적 계산에 사용
+        """
+        import math
+
+        coords = geometry.get('coordinates', [[]])
+        geom_type = geometry.get('type', '')
+
+        # MultiPolygon 또는 Polygon 처리
+        if geom_type == 'MultiPolygon':
+            polygon_coords = coords[0][0] if coords and coords[0] else []
+        elif geom_type == 'Polygon':
+            polygon_coords = coords[0] if coords else []
+        else:
+            polygon_coords = coords
+
+        if not polygon_coords or len(polygon_coords) < 3:
+            return 0
+
+        # 중심점 계산 (WGS84 → 미터 변환용)
+        lngs = [c[0] for c in polygon_coords]
+        lats = [c[1] for c in polygon_coords]
+        center_lat = sum(lats) / len(lats)
+
+        # WGS84 좌표를 미터로 변환
+        lat_rad = math.radians(center_lat)
+        meters_per_lat = 111320  # 위도 1도 = 약 111km
+        meters_per_lng = 111320 * math.cos(lat_rad)  # 경도 1도 = 111km * cos(위도)
+
+        # 좌표를 미터 단위로 변환
+        coords_m = []
+        for coord in polygon_coords:
+            x_m = coord[0] * meters_per_lng
+            y_m = coord[1] * meters_per_lat
+            coords_m.append((x_m, y_m))
+
+        # Shoelace formula로 면적 계산
+        n = len(coords_m)
+        area = 0.0
+        for i in range(n):
+            j = (i + 1) % n
+            area += coords_m[i][0] * coords_m[j][1]
+            area -= coords_m[j][0] * coords_m[i][1]
+
+        return abs(area) / 2.0
+
     def _get_cached(self, cache_key: str):
         """캐시 조회"""
         return cache.get(cache_key)
@@ -335,7 +384,14 @@ class LambdaProxyService:
             return {'success': False, 'error': str(e)}
 
     def get_cadastral(self, pnu: str) -> dict:
-        """지적정보 조회 (GET ?pnu=xxx)"""
+        """지적정보 조회 (GET ?pnu=xxx)
+
+        jeju-land-analysis 패턴 적용:
+        - cadastral: 지적도 데이터 (geometry 포함)
+        - landChar: 토지특성정보 (면적, 용도지역 등)
+
+        landChar가 없을 때 cadastral.geometry에서 면적 계산
+        """
         cache_key = f"cadastral:{pnu}"
         cached = self._get_cached(cache_key)
         if cached:
@@ -365,20 +421,35 @@ class LambdaProxyService:
             if not jiga and land_char.get('pblntfPclnd'):
                 jiga = float(land_char.get('pblntfPclnd', 0))
 
-            # 면적 추출
+            # 면적 추출: landChar 우선, 없으면 cadastral.geometry에서 계산
             area = float(land_char.get('lndpclAr', 0) or 0)
+            if area == 0 and cadastral.get('geometry'):
+                # landChar가 없거나 면적이 0일 때 geometry에서 면적 계산
+                area = round(self._calculate_polygon_area(cadastral['geometry']), 2)
+
+            # 지목 추출: cadastral.jibun에서 파싱 (예: "290-34대" → "대")
+            land_category = land_char.get('lndcgrCodeNm', '')
+            if not land_category and cadastral.get('jibun'):
+                jibun = cadastral.get('jibun', '')
+                # 숫자와 '-'를 제외한 마지막 글자가 지목
+                for char in reversed(jibun):
+                    if not char.isdigit() and char != '-' and char != ' ':
+                        land_category = char
+                        break
+            if not land_category:
+                land_category = '대'
 
             parsed = {
                 'success': True,
                 'jiga': jiga,
-                'land_category': land_char.get('lndcgrCodeNm', '대'),
+                'land_category': land_category,
                 'area': area,
-                'ownership': land_char.get('ownshipDivNm', '-'),
-                'land_use_situation': land_char.get('ladUseSittnNm', '-'),
-                'terrain_height': land_char.get('tpgrphHgCodeNm', '-'),
-                'terrain_shape': land_char.get('tpgrphFrmCodeNm', '-'),
-                'road_side': land_char.get('roadSideCodeNm', '-'),
-                'use_zone': land_char.get('prposArea1Nm', ''),
+                'ownership': land_char.get('ownshipDivNm', '-') if land_char else '-',
+                'land_use_situation': land_char.get('ladUseSittnNm', '-') if land_char else '-',
+                'terrain_height': land_char.get('tpgrphHgCodeNm', '-') if land_char else '-',
+                'terrain_shape': land_char.get('tpgrphFrmCodeNm', '-') if land_char else '-',
+                'road_side': land_char.get('roadSideCodeNm', '-') if land_char else '-',
+                'use_zone': land_char.get('prposArea1Nm', '') if land_char else '',
                 'address': cadastral.get('addr', ''),
             }
             self._set_cached(cache_key, parsed, settings.CACHE_TIMEOUTS.get('parcel_info', 604800))
