@@ -507,11 +507,19 @@ function SearchPageContent() {
                     </div>
                   </div>
                   {totalInfo.totalArea > 0 && totalInfo.maxCoverage > 0 && (
-                    <div className="mt-3 p-3 bg-white rounded-lg">
-                      <p className="text-xs text-gray-500 mb-1">예상 최대 건축면적</p>
-                      <p className="text-xl font-bold text-blue-600">
-                        {(totalInfo.totalArea * totalInfo.maxCoverage / 100).toLocaleString()}m²
-                      </p>
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      <div className="p-3 bg-white rounded-lg">
+                        <p className="text-xs text-gray-500 mb-1">예상 최대 건축면적</p>
+                        <p className="text-xl font-bold text-blue-600">
+                          {(totalInfo.totalArea * totalInfo.maxCoverage / 100).toLocaleString()}m²
+                        </p>
+                      </div>
+                      <div className="p-3 bg-white rounded-lg">
+                        <p className="text-xs text-gray-500 mb-1">예상 최대 연면적</p>
+                        <p className="text-xl font-bold text-purple-600">
+                          {(totalInfo.totalArea * totalInfo.maxFar / 100).toLocaleString()}m²
+                        </p>
+                      </div>
                     </div>
                   )}
                 </div>
