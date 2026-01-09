@@ -160,9 +160,16 @@ function BuildingMass({ building, landDimensions, floorSetbacks, useZone }: {
   // 건물 가용 영역 계산
   const availableWidth = landWidth - building.setbacks.left - building.setbacks.right
   const availableDepth = landDepth - building.setbacks.front - baseBackSetback
+  const rawBuildingArea = availableWidth * availableDepth
 
-  // 건물 너비는 가용 영역 전체 사용
-  const buildingWidth = Math.max(3, availableWidth)
+  // 건물 크기를 실제 buildingArea에 맞게 조정 (법정 한도 반영)
+  // buildingArea가 rawBuildingArea보다 작으면 비율에 맞게 축소
+  const areaRatio = building.buildingArea > 0 && rawBuildingArea > 0
+    ? Math.sqrt(building.buildingArea / rawBuildingArea)
+    : 1
+
+  // 건물 너비/깊이에 비율 적용
+  const buildingWidth = Math.max(3, availableWidth * areaRatio)
 
   // 건물 높이 계산
   const buildingHeight = building.floors * building.floorHeight
@@ -196,9 +203,9 @@ function BuildingMass({ building, landDimensions, floorSetbacks, useZone }: {
         backSetback = getNorthSetbackAtHeight(floorTopHeight, building.setbacks.back)
       }
 
-      // 해당 층의 깊이 계산
+      // 해당 층의 깊이 계산 (areaRatio 적용)
       const floorAvailableDepth = landDepth - building.setbacks.front - backSetback
-      const floorDepth = Math.max(1, floorAvailableDepth)
+      const floorDepth = Math.max(1, floorAvailableDepth * areaRatio)
 
       // 색상 및 라벨
       let color: string
@@ -231,7 +238,7 @@ function BuildingMass({ building, landDimensions, floorSetbacks, useZone }: {
       })
     }
     return result
-  }, [building, buildingWidth, floorSetbacks, landDepth, useZone, isSteppedBuilding, baseBackSetback])
+  }, [building, buildingWidth, floorSetbacks, landDepth, useZone, isSteppedBuilding, baseBackSetback, areaRatio])
 
   return (
     <group position={[centerX, 0, 0]}>
@@ -466,8 +473,8 @@ function LandBoundary({
         lineWidth={3}
       />
 
-      {/* 이격거리 표시 - 사각형 fallback에서만 */}
-      {!landShape && <SetbackLines landDimensions={landDimensions} setbacks={displaySetbacks} />}
+      {/* 이격거리 표시 - 폴리곤/사각형 모두 표시 (bounding box 기준) */}
+      <SetbackLines landDimensions={landDimensions} setbacks={displaySetbacks} />
 
       {/* 대지 모서리 포인트 */}
       {cornerPoints.map((pos, i) => (

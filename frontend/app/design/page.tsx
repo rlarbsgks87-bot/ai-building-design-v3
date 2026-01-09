@@ -232,8 +232,17 @@ function DesignPageContent() {
       // 가용 면적 계산 (실제 필지 크기 기반)
       const availableWidth = landWidth - alt.setbacks.left - alt.setbacks.right
       const availableDepth = landDepth - alt.setbacks.front - alt.setbacks.back
-      const buildingArea = Math.max(0, availableWidth * availableDepth)
-      const totalFloorArea = buildingArea * alt.floors
+      const rawBuildingArea = Math.max(0, availableWidth * availableDepth)
+
+      // 건폐율 법정 한도 적용 (불규칙 폴리곤에서 bounding box > 실제면적 문제 해결)
+      const maxBuildingAreaByLaw = (landInfo.area * landInfo.maxCoverage) / 100
+      const buildingArea = Math.min(rawBuildingArea, maxBuildingAreaByLaw)
+
+      // 용적률 법정 한도 적용
+      const maxFloorAreaByLaw = (landInfo.area * landInfo.maxFar) / 100
+      const rawTotalFloorArea = buildingArea * alt.floors
+      const totalFloorArea = Math.min(rawTotalFloorArea, maxFloorAreaByLaw)
+
       const coverageRatio = (buildingArea / landInfo.area) * 100
       const farRatio = (totalFloorArea / landInfo.area) * 100
 
