@@ -4,6 +4,7 @@ from .views import (
     GeocodeView,
     LandDetailView,
     LandRegulationView,
+    LandGeometryView,
     ParcelByPointView,
     VWorldWMSProxyView,
     VWorldWFSProxyView,
@@ -19,6 +20,7 @@ urlpatterns = [
     path('by-point/', ParcelByPointView.as_view(), name='by-point'),
     path('<str:pnu>/', LandDetailView.as_view(), name='detail'),
     path('<str:pnu>/regulation/', LandRegulationView.as_view(), name='regulation'),
+    path('<str:pnu>/geometry/', LandGeometryView.as_view(), name='geometry'),
     # VWorld 프록시
     path('proxy/wms/', VWorldWMSProxyView.as_view(), name='proxy-wms'),
     path('proxy/wfs/', VWorldWFSProxyView.as_view(), name='proxy-wfs'),

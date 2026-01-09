@@ -82,6 +82,10 @@ interface LandInfo {
   maxFar: number
   heightLimit: number | null
   landPrice: number
+  dimensions?: {
+    width: number
+    depth: number
+  }
 }
 
 type TabType = 'config' | 'floors' | 'sunlight' | 'profit' | 'compare'
@@ -130,6 +134,18 @@ function DesignPageContent() {
           const regResponse = await landApi.getRegulation(pnu)
           const regulation = regResponse.success ? regResponse.data : null
 
+          // 필지 지오메트리 가져오기 (실제 가로/세로)
+          let dimensions: { width: number; depth: number } | undefined
+          try {
+            const geomResponse = await landApi.getGeometry(pnu)
+            if (geomResponse.success && geomResponse.dimensions) {
+              dimensions = geomResponse.dimensions
+              console.log('Parcel geometry loaded:', dimensions)
+            }
+          } catch (geomError) {
+            console.warn('Failed to fetch parcel geometry, using square approximation:', geomError)
+          }
+
           setLandInfo({
             pnu: pnu,
             address: address || detail.address_jibun || '',
@@ -139,6 +155,7 @@ function DesignPageContent() {
             maxFar: regulation?.far || 200,
             heightLimit: regulation?.height_limit ? parseInt(regulation.height_limit) : null,
             landPrice: detail.official_land_price || 0,
+            dimensions: dimensions,
           })
         }
       } catch (error) {
@@ -198,14 +215,16 @@ function DesignPageContent() {
   useEffect(() => {
     if (landInfo.area <= 0) return
 
-    const landSide = Math.sqrt(landInfo.area)
+    // 실제 필지 크기 사용 (없으면 정사각형 근사)
+    const landWidth = landInfo.dimensions?.width || Math.sqrt(landInfo.area)
+    const landDepth = landInfo.dimensions?.depth || Math.sqrt(landInfo.area)
     const COST_PER_SQM = 2500000 // 건축비 250만원/m²
     const REVENUE_PER_SQM = 3400000 // 분양가 340만원/m²
 
     const recalculate = (alt: BuildingConfig): BuildingConfig => {
-      // 가용 면적 계산
-      const availableWidth = landSide - alt.setbacks.left - alt.setbacks.right
-      const availableDepth = landSide - alt.setbacks.front - alt.setbacks.back
+      // 가용 면적 계산 (실제 필지 크기 기반)
+      const availableWidth = landWidth - alt.setbacks.left - alt.setbacks.right
+      const availableDepth = landDepth - alt.setbacks.front - alt.setbacks.back
       const buildingArea = Math.max(0, availableWidth * availableDepth)
       const totalFloorArea = buildingArea * alt.floors
       const coverageRatio = (buildingArea / landInfo.area) * 100
@@ -223,7 +242,7 @@ function DesignPageContent() {
     }
 
     setAlternatives(prev => prev.map(recalculate))
-  }, [landInfo.area])
+  }, [landInfo.area, landInfo.dimensions])
 
   const currentBuilding = alternatives[selectedAlternative]
 
@@ -586,6 +605,7 @@ function DesignPageContent() {
           <MassViewer3D
             building={currentBuilding}
             landArea={landInfo.area}
+            landDimensions={landInfo.dimensions}
             useZone={landInfo.useZone}
             showNorthSetback={true}
             floorSetbacks={currentFloorSetbacks}

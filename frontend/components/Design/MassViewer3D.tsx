@@ -63,13 +63,19 @@ export function getNorthSetbackAtHeight(currentHeight: number, baseSetback: numb
 interface MassViewer3DProps {
   building: BuildingConfig
   landArea: number
+  landDimensions?: { width: number; depth: number }  // VWorld에서 가져온 실제 필지 크기
   useZone?: string  // 용도지역 (주거지역인 경우 일조권 적용)
   showNorthSetback?: boolean  // 북쪽 일조권 표시 여부
   floorSetbacks?: number[]  // 층별 북측 이격거리 (계단형 매스용)
 }
 
-// 대지 크기 계산 (정사각형 가정)
-function calculateLandDimensions(area: number) {
+// 대지 크기 계산 (실제 dimensions가 있으면 사용, 없으면 정사각형 가정)
+function calculateLandDimensions(area: number, dimensions?: { width: number; depth: number }) {
+  if (dimensions && dimensions.width > 0 && dimensions.depth > 0) {
+    // 실제 필지 형상 사용
+    return { width: dimensions.width, depth: dimensions.depth }
+  }
+  // 정사각형 근사 (fallback)
   const side = Math.sqrt(area)
   return { width: side, depth: side }
 }
@@ -1129,9 +1135,9 @@ function AutoRotate({ enabled = false }: { enabled?: boolean }) {
   return null
 }
 
-export function MassViewer3D({ building, landArea, useZone = '제2종일반주거지역', showNorthSetback = true, floorSetbacks }: MassViewer3DProps) {
+export function MassViewer3D({ building, landArea, landDimensions: propLandDimensions, useZone = '제2종일반주거지역', showNorthSetback = true, floorSetbacks }: MassViewer3DProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('perspective')
-  const landDimensions = useMemo(() => calculateLandDimensions(landArea), [landArea])
+  const landDimensions = useMemo(() => calculateLandDimensions(landArea, propLandDimensions), [landArea, propLandDimensions])
   const buildingHeight = building.floors * building.floorHeight
   const viewDistance = useMemo(() => Math.max(landDimensions.width, landDimensions.depth, buildingHeight) * 1.5, [landDimensions, buildingHeight])
 

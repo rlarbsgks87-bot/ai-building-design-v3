@@ -175,6 +175,23 @@ class VWorldWFSProxyView(APIView):
             }, status=status.HTTP_502_BAD_GATEWAY)
 
 
+class LandGeometryView(APIView):
+    """필지 지오메트리 조회 API (VWorld 연속지적도)"""
+
+    def get(self, request, pnu):
+        vworld = VWorldService()
+        result = vworld.get_parcel_geometry(pnu)
+
+        if result.get('success'):
+            return Response(result)
+
+        return Response({
+            'success': False,
+            'error': 'NOT_FOUND',
+            'message': result.get('error', '필지 지오메트리를 찾을 수 없습니다.'),
+        }, status=status.HTTP_404_NOT_FOUND)
+
+
 class LandAnalysisView(APIView):
     """주소 기반 토지 분석 API (Lambda 프록시 사용)
 

@@ -181,6 +181,24 @@ export const authApi = {
   },
 }
 
+export interface ParcelGeometry {
+  geometry: [number, number][]  // [lng, lat][] 폴리곤 좌표
+  bbox: {
+    minX: number
+    minY: number
+    maxX: number
+    maxY: number
+  }
+  dimensions: {
+    width: number  // 미터 단위
+    depth: number  // 미터 단위
+  }
+  center: {
+    lng: number
+    lat: number
+  }
+}
+
 export const landApi = {
   search: async (query: string): Promise<{ success: boolean; data: SearchResult[] }> => {
     const response = await api.get(`/land/search/?q=${encodeURIComponent(query)}`)
@@ -200,6 +218,10 @@ export const landApi = {
   },
   getRegulation: async (pnu: string): Promise<{ success: boolean; data: Regulation }> => {
     const response = await api.get(`/land/${pnu}/regulation/`)
+    return response.data
+  },
+  getGeometry: async (pnu: string): Promise<{ success: boolean } & ParcelGeometry> => {
+    const response = await api.get(`/land/${pnu}/geometry/`)
     return response.data
   },
   getByPoint: async (x: number, y: number) => {
