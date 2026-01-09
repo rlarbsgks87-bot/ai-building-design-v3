@@ -199,6 +199,26 @@ export interface ParcelGeometry {
   }
 }
 
+export interface AdjacentRoad {
+  pnu: string
+  geometry: [number, number][]  // [lng, lat][] 폴리곤 좌표
+  jimok: string
+  direction: 'north' | 'south' | 'east' | 'west' | 'unknown'
+  center: {
+    lng: number
+    lat: number
+  }
+}
+
+export interface AdjacentRoadsResponse {
+  success: boolean
+  roads: AdjacentRoad[]
+  parcel_center: {
+    lng: number
+    lat: number
+  }
+}
+
 export const landApi = {
   search: async (query: string): Promise<{ success: boolean; data: SearchResult[] }> => {
     const response = await api.get(`/land/search/?q=${encodeURIComponent(query)}`)
@@ -222,6 +242,10 @@ export const landApi = {
   },
   getGeometry: async (pnu: string): Promise<{ success: boolean } & ParcelGeometry> => {
     const response = await api.get(`/land/${pnu}/geometry/`)
+    return response.data
+  },
+  getAdjacentRoads: async (pnu: string): Promise<AdjacentRoadsResponse> => {
+    const response = await api.get(`/land/${pnu}/roads/`)
     return response.data
   },
   getByPoint: async (x: number, y: number) => {

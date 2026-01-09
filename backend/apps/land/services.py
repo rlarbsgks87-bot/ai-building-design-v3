@@ -665,6 +665,164 @@ class VWorldService:
 
         return abs(area) / 2.0
 
+    def get_adjacent_roads(self, pnu: str, bbox: dict = None) -> dict:
+        """인접 도로 지오메트리 조회 (VWorld 연속지적도 - 지목이 '도'인 필지)
+
+        Args:
+            pnu: 대상 필지 PNU
+            bbox: 바운딩 박스 {minX, minY, maxX, maxY} (WGS84)
+
+        Returns:
+            dict: {
+                success: bool,
+                roads: [
+                    {
+                        pnu: str,
+                        geometry: [[lng, lat], ...],
+                        jimok: str,
+                        direction: str  # 'north', 'south', 'east', 'west', 'unknown'
+                    }
+                ]
+            }
+        """
+        import math
+
+        cache_key = f"adjacent_roads:{pnu}"
+        cached = cache.get(cache_key)
+        if cached:
+            return cached
+
+        # bbox가 없으면 먼저 필지 지오메트리를 조회
+        if not bbox:
+            parcel_geom = self.get_parcel_geometry(pnu)
+            if not parcel_geom.get('success'):
+                return {'success': False, 'error': '필지 지오메트리를 찾을 수 없습니다', 'roads': []}
+            bbox = parcel_geom.get('bbox')
+            parcel_center = parcel_geom.get('center', {})
+        else:
+            parcel_center = {
+                'lng': (bbox['minX'] + bbox['maxX']) / 2,
+                'lat': (bbox['minY'] + bbox['maxY']) / 2,
+            }
+
+        if not bbox:
+            return {'success': False, 'error': 'bbox가 없습니다', 'roads': []}
+
+        # bbox 확장 (약 50m 버퍼)
+        lat_rad = math.radians(parcel_center['lat'])
+        meters_per_lat = 111320
+        meters_per_lng = 111320 * math.cos(lat_rad)
+
+        buffer_meters = 50  # 50m 버퍼
+        lng_buffer = buffer_meters / meters_per_lng
+        lat_buffer = buffer_meters / meters_per_lat
+
+        expanded_bbox = {
+            'minX': bbox['minX'] - lng_buffer,
+            'minY': bbox['minY'] - lat_buffer,
+            'maxX': bbox['maxX'] + lng_buffer,
+            'maxY': bbox['maxY'] + lat_buffer,
+        }
+
+        roads = []
+
+        if self.api_key:
+            try:
+                # VWorld WFS로 bbox 내 지적도 조회
+                bbox_str = f"{expanded_bbox['minX']},{expanded_bbox['minY']},{expanded_bbox['maxX']},{expanded_bbox['maxY']}"
+
+                params = {
+                    'service': 'data',
+                    'request': 'GetFeature',
+                    'data': 'LP_PA_CBND_BUBUN',  # 연속지적도
+                    'key': self.api_key,
+                    'domain': settings.VWORLD_DOMAIN,
+                    'geomFilter': f'BOX({bbox_str})',
+                    'format': 'json',
+                    'errorformat': 'json',
+                    'crs': 'EPSG:4326',
+                    'geometry': 'true',
+                    'attribute': 'true',
+                    'size': 100,  # 최대 100개 필지
+                }
+
+                response = requests.get(self.DATA_URL, params=params, timeout=15)
+                data = response.json()
+
+                if data.get('response', {}).get('status') == 'OK':
+                    features = data['response'].get('result', {}).get('featureCollection', {}).get('features', [])
+
+                    for feature in features:
+                        props = feature.get('properties', {})
+                        geometry = feature.get('geometry', {})
+                        feature_pnu = props.get('pnu', '')
+
+                        # 본인 필지 제외
+                        if feature_pnu == pnu:
+                            continue
+
+                        # 지번에서 지목 추출 (예: "290-34도" → "도")
+                        jibun = props.get('jibun', '')
+                        jimok = ''
+                        if jibun:
+                            for char in reversed(jibun):
+                                if not char.isdigit() and char != '-' and char != ' ':
+                                    jimok = char
+                                    break
+
+                        # 지목이 '도'(도로)인 경우만 포함
+                        if jimok != '도':
+                            continue
+
+                        # 폴리곤 좌표 추출
+                        coords = geometry.get('coordinates', [[]])
+                        geom_type = geometry.get('type', '')
+
+                        if geom_type == 'MultiPolygon':
+                            polygon_coords = coords[0][0] if coords and coords[0] else []
+                        elif geom_type == 'Polygon':
+                            polygon_coords = coords[0] if coords else []
+                        else:
+                            polygon_coords = coords
+
+                        if not polygon_coords:
+                            continue
+
+                        # 도로 중심점 계산
+                        road_lngs = [c[0] for c in polygon_coords]
+                        road_lats = [c[1] for c in polygon_coords]
+                        road_center_lng = sum(road_lngs) / len(road_lngs)
+                        road_center_lat = sum(road_lats) / len(road_lats)
+
+                        # 필지 중심과 도로 중심의 상대 위치로 방향 결정
+                        dx = road_center_lng - parcel_center['lng']
+                        dy = road_center_lat - parcel_center['lat']
+
+                        # 방향 결정 (북/남/동/서)
+                        if abs(dx) > abs(dy):
+                            direction = 'east' if dx > 0 else 'west'
+                        else:
+                            direction = 'north' if dy > 0 else 'south'
+
+                        roads.append({
+                            'pnu': feature_pnu,
+                            'geometry': polygon_coords,
+                            'jimok': jimok,
+                            'direction': direction,
+                            'center': {'lng': road_center_lng, 'lat': road_center_lat},
+                        })
+
+            except Exception as e:
+                pass  # 실패 시 빈 배열 반환
+
+        result = {
+            'success': True,
+            'roads': roads,
+            'parcel_center': parcel_center,
+        }
+        cache.set(cache_key, result, 604800)  # 7일
+        return result
+
     def get_parcel_geometry(self, pnu: str) -> dict:
         """필지 폴리곤 지오메트리 조회 (Lambda 프록시 우선, VWorld 직접 호출 백업)
 

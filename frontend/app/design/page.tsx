@@ -73,6 +73,14 @@ interface BuildingConfig {
   estimatedRevenue: number
 }
 
+interface AdjacentRoad {
+  pnu: string
+  geometry: [number, number][]  // [lng, lat][] 폴리곤 좌표
+  jimok: string
+  direction: 'north' | 'south' | 'east' | 'west' | 'unknown'
+  center: { lng: number; lat: number }
+}
+
 interface LandInfo {
   pnu: string
   address: string
@@ -87,6 +95,7 @@ interface LandInfo {
     depth: number
   }
   polygon?: [number, number][]  // [lng, lat][] 지적도 폴리곤 좌표
+  adjacentRoads?: AdjacentRoad[]  // 인접 도로 데이터
 }
 
 type TabType = 'config' | 'floors' | 'sunlight' | 'profit' | 'compare'
@@ -152,6 +161,18 @@ function DesignPageContent() {
             console.warn('Failed to fetch parcel geometry, using square approximation:', geomError)
           }
 
+          // 인접 도로 데이터 가져오기 (지적도 기반)
+          let adjacentRoads: AdjacentRoad[] | undefined
+          try {
+            const roadsResponse = await landApi.getAdjacentRoads(pnu)
+            if (roadsResponse.success && roadsResponse.roads) {
+              adjacentRoads = roadsResponse.roads
+              console.log('Adjacent roads loaded:', adjacentRoads.length, 'roads')
+            }
+          } catch (roadsError) {
+            console.warn('Failed to fetch adjacent roads:', roadsError)
+          }
+
           setLandInfo({
             pnu: pnu,
             address: address || detail.address_jibun || '',
@@ -163,6 +184,7 @@ function DesignPageContent() {
             landPrice: detail.official_land_price || 0,
             dimensions: dimensions,
             polygon: polygon,
+            adjacentRoads: adjacentRoads,
           })
         }
       } catch (error) {
@@ -623,6 +645,7 @@ function DesignPageContent() {
             landArea={landInfo.area}
             landDimensions={landInfo.dimensions}
             landPolygon={landInfo.polygon}
+            adjacentRoads={landInfo.adjacentRoads}
             useZone={landInfo.useZone}
             showNorthSetback={true}
             floorSetbacks={currentFloorSetbacks}

@@ -61,11 +61,20 @@ export function getNorthSetbackAtHeight(currentHeight: number, baseSetback: numb
   }
 }
 
+interface AdjacentRoad {
+  pnu: string
+  geometry: [number, number][]  // [lng, lat][] 폴리곤 좌표
+  jimok: string
+  direction: 'north' | 'south' | 'east' | 'west' | 'unknown'
+  center: { lng: number; lat: number }
+}
+
 interface MassViewer3DProps {
   building: BuildingConfig
   landArea: number
   landDimensions?: { width: number; depth: number }  // VWorld에서 가져온 실제 필지 크기
   landPolygon?: [number, number][]  // [lng, lat][] 지적도 폴리곤 좌표
+  adjacentRoads?: AdjacentRoad[]  // 인접 도로 데이터 (지적도 기반)
   useZone?: string  // 용도지역 (주거지역인 경우 일조권 적용)
   showNorthSetback?: boolean  // 북쪽 일조권 표시 여부
   floorSetbacks?: number[]  // 층별 북측 이격거리 (계단형 매스용)
@@ -579,15 +588,110 @@ function FloorLines({
   )
 }
 
+// 도로 폴리곤 컴포넌트 (지적도 기반)
+function RoadPolygon({
+  road,
+  landCenter,
+}: {
+  road: AdjacentRoad
+  landCenter: [number, number]  // [lng, lat] 대지 중심점
+}) {
+  // 도로 폴리곤을 대지 중심 기준 로컬 좌표로 변환
+  const { roadShape, boundaryPoints, labelPosition, directionLabel } = useMemo(() => {
+    if (!road.geometry || road.geometry.length < 3) {
+      return { roadShape: null, boundaryPoints: [], labelPosition: [0, 0, 0], directionLabel: '' }
+    }
+
+    const centerLng = landCenter[0]
+    const centerLat = landCenter[1]
+
+    // WGS84 → 미터 변환
+    const metersPerDegreeLat = 111320
+    const metersPerDegreeLng = 111320 * Math.cos(centerLat * Math.PI / 180)
+
+    // 폴리곤 좌표 변환
+    const localPoints: [number, number][] = road.geometry.map(([lng, lat]) => {
+      const x = (lng - centerLng) * metersPerDegreeLng
+      const z = (lat - centerLat) * metersPerDegreeLat
+      return [x, z]
+    })
+
+    // Three.js Shape 생성 (XY 평면 → XZ 평면으로 회전)
+    const shape = new THREE.Shape()
+    shape.moveTo(localPoints[0][0], -localPoints[0][1])  // Y좌표 음수로 (회전 대비)
+    for (let i = 1; i < localPoints.length; i++) {
+      shape.lineTo(localPoints[i][0], -localPoints[i][1])
+    }
+    shape.closePath()
+
+    // 경계선 포인트
+    const boundaryPts: [number, number, number][] = localPoints.map(([x, z]) => [x, 0.02, z])
+    if (boundaryPts.length > 0) {
+      boundaryPts.push([...boundaryPts[0]])
+    }
+
+    // 라벨 위치 (도로 중심)
+    const roadCenterX = (road.center.lng - centerLng) * metersPerDegreeLng
+    const roadCenterZ = (road.center.lat - centerLat) * metersPerDegreeLat
+
+    // 방향 라벨
+    const dirLabel = road.direction === 'north' ? '북측 도로' :
+                     road.direction === 'south' ? '남측 도로' :
+                     road.direction === 'east' ? '동측 도로' :
+                     road.direction === 'west' ? '서측 도로' : '도로'
+
+    return {
+      roadShape: shape,
+      boundaryPoints: boundaryPts,
+      labelPosition: [roadCenterX, 0.5, roadCenterZ] as [number, number, number],
+      directionLabel: dirLabel,
+    }
+  }, [road, landCenter])
+
+  if (!roadShape) return null
+
+  return (
+    <group>
+      {/* 도로 폴리곤 */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.03, 0]} receiveShadow>
+        <shapeGeometry args={[roadShape]} />
+        <meshStandardMaterial color="#4a5568" side={THREE.DoubleSide} />
+      </mesh>
+
+      {/* 도로 경계선 */}
+      <Line
+        points={boundaryPoints}
+        color="#9ca3af"
+        lineWidth={2}
+      />
+
+      {/* 도로 라벨 */}
+      <Text
+        position={labelPosition}
+        fontSize={1.0}
+        color="#ffffff"
+        anchorX="center"
+        rotation={[-Math.PI / 2, 0, 0]}
+        outlineWidth={0.05}
+        outlineColor="#000000"
+      >
+        {directionLabel}
+      </Text>
+    </group>
+  )
+}
+
 // 대지 경계 및 이격선
 function LandBoundary({
   landDimensions,
   landPolygon,
+  adjacentRoads,
   setbacks,
   actualBackSetback,
 }: {
   landDimensions: { width: number; depth: number }
   landPolygon?: [number, number][]  // [lng, lat][] 지적도 폴리곤 좌표
+  adjacentRoads?: AdjacentRoad[]  // 인접 도로 데이터
   setbacks: BuildingConfig['setbacks']
   actualBackSetback?: number  // 실제 1층 북측 이격거리 (floorSetbacks[0])
 }) {
@@ -737,70 +841,82 @@ function LandBoundary({
         {`북측 ${displaySetbacks.back}m`}
       </Text>
 
-      {/* 도로 표시 (전면/남쪽 방향) */}
-      <group>
-        {/* 도로 평면 */}
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.03, -depth / 2 - 4]} receiveShadow>
-          <planeGeometry args={[width + 6, 8]} />
-          <meshStandardMaterial color="#4a5568" side={THREE.DoubleSide} />
-        </mesh>
+      {/* 인접 도로 표시 (지적도 데이터 또는 fallback) */}
+      {adjacentRoads && adjacentRoads.length > 0 && localPolygon ? (
+        // 실제 지적도 도로 데이터 렌더링
+        adjacentRoads.map((road, idx) => (
+          <RoadPolygon
+            key={road.pnu || idx}
+            road={road}
+            landCenter={localPolygon.center}
+          />
+        ))
+      ) : (
+        // Fallback: 하드코딩된 도로 (전면/남쪽 방향)
+        <group>
+          {/* 도로 평면 */}
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.03, -depth / 2 - 4]} receiveShadow>
+            <planeGeometry args={[width + 6, 8]} />
+            <meshStandardMaterial color="#4a5568" side={THREE.DoubleSide} />
+          </mesh>
 
-        {/* 도로 중앙선 (흰색 점선) */}
-        <Line
-          points={[
-            [-width / 2 - 3, 0.01, -depth / 2 - 4],
-            [width / 2 + 3, 0.01, -depth / 2 - 4],
-          ]}
-          color="#ffffff"
-          lineWidth={2}
-          dashed
-          dashSize={1.5}
-          gapSize={1}
-        />
+          {/* 도로 중앙선 (흰색 점선) */}
+          <Line
+            points={[
+              [-width / 2 - 3, 0.01, -depth / 2 - 4],
+              [width / 2 + 3, 0.01, -depth / 2 - 4],
+            ]}
+            color="#ffffff"
+            lineWidth={2}
+            dashed
+            dashSize={1.5}
+            gapSize={1}
+          />
 
-        {/* 도로 경계선 (대지측) */}
-        <Line
-          points={[
-            [-width / 2 - 3, 0.02, -depth / 2],
-            [width / 2 + 3, 0.02, -depth / 2],
-          ]}
-          color="#9ca3af"
-          lineWidth={2}
-        />
+          {/* 도로 경계선 (대지측) */}
+          <Line
+            points={[
+              [-width / 2 - 3, 0.02, -depth / 2],
+              [width / 2 + 3, 0.02, -depth / 2],
+            ]}
+            color="#9ca3af"
+            lineWidth={2}
+          />
 
-        {/* 도로 라벨 */}
-        <Text
-          position={[0, 0.5, -depth / 2 - 4]}
-          fontSize={1.2}
-          color="#ffffff"
-          anchorX="center"
-          rotation={[-Math.PI / 2, 0, 0]}
-          outlineWidth={0.05}
-          outlineColor="#000000"
-        >
-          도로
-        </Text>
+          {/* 도로 라벨 */}
+          <Text
+            position={[0, 0.5, -depth / 2 - 4]}
+            fontSize={1.2}
+            color="#ffffff"
+            anchorX="center"
+            rotation={[-Math.PI / 2, 0, 0]}
+            outlineWidth={0.05}
+            outlineColor="#000000"
+          >
+            도로
+          </Text>
 
-        {/* 도로 방향 화살표 (양방향 통행) */}
-        <Text
-          position={[-width / 2 - 1, 0.5, -depth / 2 - 4]}
-          fontSize={1}
-          color="#ffffff"
-          anchorX="center"
-          rotation={[-Math.PI / 2, 0, 0]}
-        >
-          ←
-        </Text>
-        <Text
-          position={[width / 2 + 1, 0.5, -depth / 2 - 4]}
-          fontSize={1}
-          color="#ffffff"
-          anchorX="center"
-          rotation={[-Math.PI / 2, 0, 0]}
-        >
-          →
-        </Text>
-      </group>
+          {/* 도로 방향 화살표 (양방향 통행) */}
+          <Text
+            position={[-width / 2 - 1, 0.5, -depth / 2 - 4]}
+            fontSize={1}
+            color="#ffffff"
+            anchorX="center"
+            rotation={[-Math.PI / 2, 0, 0]}
+          >
+            ←
+          </Text>
+          <Text
+            position={[width / 2 + 1, 0.5, -depth / 2 - 4]}
+            fontSize={1}
+            color="#ffffff"
+            anchorX="center"
+            rotation={[-Math.PI / 2, 0, 0]}
+          >
+            →
+          </Text>
+        </group>
+      )}
 
       {/* 대지 모서리 포인트 */}
       {cornerPoints.map((pos, i) => (
@@ -1559,7 +1675,7 @@ function AutoRotate({ enabled = false }: { enabled?: boolean }) {
   return null
 }
 
-export function MassViewer3D({ building, landArea, landDimensions: propLandDimensions, landPolygon, useZone = '제2종일반주거지역', showNorthSetback = true, floorSetbacks, address }: MassViewer3DProps) {
+export function MassViewer3D({ building, landArea, landDimensions: propLandDimensions, landPolygon, adjacentRoads, useZone = '제2종일반주거지역', showNorthSetback = true, floorSetbacks, address }: MassViewer3DProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('perspective')
   const [showExportMenu, setShowExportMenu] = useState(false)
   const landDimensions = useMemo(() => calculateLandDimensions(landArea, propLandDimensions), [landArea, propLandDimensions])
@@ -1651,6 +1767,7 @@ export function MassViewer3D({ building, landArea, landDimensions: propLandDimen
         <LandBoundary
           landDimensions={landDimensions}
           landPolygon={landPolygon}
+          adjacentRoads={adjacentRoads}
           setbacks={building.setbacks}
           actualBackSetback={floorSetbacks && floorSetbacks.length > 0 ? floorSetbacks[0] : undefined}
         />
