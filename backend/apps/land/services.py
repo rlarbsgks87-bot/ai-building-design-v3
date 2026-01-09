@@ -808,6 +808,9 @@ class LandService:
             if cached.parcel_area and cached.parcel_area > 0:
                 # 건축물대장 정보는 항상 실시간 조회 (캐시 안함)
                 building_info = self.datago.get_building_info(pnu)
+                # 토지이용계획도 실시간 조회
+                land_use = self.lambda_proxy.get_land_use(pnu)
+                land_use_zones = land_use.get('zones', []) if land_use.get('success') else []
                 return {
                     'success': True,
                     'data': {
@@ -816,6 +819,7 @@ class LandService:
                         'address_road': cached.address_road,
                         'parcel_area': cached.parcel_area,
                         'use_zone': cached.use_zone,
+                        'use_zones': land_use_zones,
                         'official_land_price': cached.official_land_price,
                         'latitude': cached.latitude,
                         'longitude': cached.longitude,
