@@ -861,72 +861,96 @@ function LandBoundary({
           />
         ))
       ) : (
-        // Fallback: 하드코딩된 도로 (카카오 도로명 표시)
-        <group>
-          {/* 도로 평면 */}
-          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.03, -depth / 2 - 4]} receiveShadow>
-            <planeGeometry args={[width + 6, 8]} />
-            <meshStandardMaterial color="#4a5568" side={THREE.DoubleSide} />
-          </mesh>
+        // Fallback: 카카오 API 기반 도로 방향에 따라 동적 배치
+        (() => {
+          // 도로 방향 결정 (카카오 API 기반, 기본값: south)
+          const roadDirection = kakaoRoads?.[0]?.direction || 'south'
+          const roadName = kakaoRoads?.[0]?.road_name || '도로'
 
-          {/* 도로 중앙선 (흰색 점선) */}
-          <Line
-            points={[
-              [-width / 2 - 3, 0.01, -depth / 2 - 4],
-              [width / 2 + 3, 0.01, -depth / 2 - 4],
-            ]}
-            color="#ffffff"
-            lineWidth={2}
-            dashed
-            dashSize={1.5}
-            gapSize={1}
-          />
+          // 방향에 따른 Z 위치 계산 (+Z = 북쪽, -Z = 남쪽)
+          const isNorth = roadDirection === 'north'
+          const roadZ = isNorth ? depth / 2 + 4 : -depth / 2 - 4
+          const boundaryZ = isNorth ? depth / 2 : -depth / 2
 
-          {/* 도로 경계선 (대지측) */}
-          <Line
-            points={[
-              [-width / 2 - 3, 0.02, -depth / 2],
-              [width / 2 + 3, 0.02, -depth / 2],
-            ]}
-            color="#9ca3af"
-            lineWidth={2}
-          />
+          return (
+            <group>
+              {/* 도로 평면 */}
+              <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.03, roadZ]} receiveShadow>
+                <planeGeometry args={[width + 6, 8]} />
+                <meshStandardMaterial color="#4a5568" side={THREE.DoubleSide} />
+              </mesh>
 
-          {/* 도로 라벨 (카카오에서 가져온 도로명 또는 기본값) */}
-          <Text
-            position={[0, 0.5, -depth / 2 - 4]}
-            fontSize={1.2}
-            color="#ffffff"
-            anchorX="center"
-            rotation={[-Math.PI / 2, 0, 0]}
-            outlineWidth={0.05}
-            outlineColor="#000000"
-          >
-            {kakaoRoads?.find(r => r.direction === 'south')?.road_name ||
-             kakaoRoads?.[0]?.road_name ||
-             '도로'}
-          </Text>
+              {/* 도로 중앙선 (흰색 점선) */}
+              <Line
+                points={[
+                  [-width / 2 - 3, 0.01, roadZ],
+                  [width / 2 + 3, 0.01, roadZ],
+                ]}
+                color="#ffffff"
+                lineWidth={2}
+                dashed
+                dashSize={1.5}
+                gapSize={1}
+              />
 
-          {/* 도로 방향 화살표 (양방향 통행) */}
-          <Text
-            position={[-width / 2 - 1, 0.5, -depth / 2 - 4]}
-            fontSize={1}
-            color="#ffffff"
-            anchorX="center"
-            rotation={[-Math.PI / 2, 0, 0]}
-          >
-            ←
-          </Text>
-          <Text
-            position={[width / 2 + 1, 0.5, -depth / 2 - 4]}
-            fontSize={1}
-            color="#ffffff"
-            anchorX="center"
-            rotation={[-Math.PI / 2, 0, 0]}
-          >
-            →
-          </Text>
-        </group>
+              {/* 도로 경계선 (대지측) */}
+              <Line
+                points={[
+                  [-width / 2 - 3, 0.02, boundaryZ],
+                  [width / 2 + 3, 0.02, boundaryZ],
+                ]}
+                color="#9ca3af"
+                lineWidth={2}
+              />
+
+              {/* 도로 라벨 */}
+              <Text
+                position={[0, 0.5, roadZ]}
+                fontSize={1.2}
+                color="#ffffff"
+                anchorX="center"
+                rotation={[-Math.PI / 2, 0, 0]}
+                outlineWidth={0.05}
+                outlineColor="#000000"
+              >
+                {roadName}
+              </Text>
+
+              {/* 도로 방향 표시 (북측/남측) */}
+              <Text
+                position={[width / 2 + 4, 0.5, roadZ]}
+                fontSize={0.8}
+                color="#fbbf24"
+                anchorX="left"
+                rotation={[-Math.PI / 2, 0, 0]}
+                outlineWidth={0.03}
+                outlineColor="#000000"
+              >
+                {isNorth ? '(북측 도로)' : '(남측 도로)'}
+              </Text>
+
+              {/* 도로 방향 화살표 (양방향 통행) */}
+              <Text
+                position={[-width / 2 - 1, 0.5, roadZ]}
+                fontSize={1}
+                color="#ffffff"
+                anchorX="center"
+                rotation={[-Math.PI / 2, 0, 0]}
+              >
+                ←
+              </Text>
+              <Text
+                position={[width / 2 + 1, 0.5, roadZ]}
+                fontSize={1}
+                color="#ffffff"
+                anchorX="center"
+                rotation={[-Math.PI / 2, 0, 0]}
+              >
+                →
+              </Text>
+            </group>
+          )
+        })()
       )}
 
       {/* 대지 모서리 포인트 */}
