@@ -800,9 +800,9 @@ function AdjacentParcelPolygon({
     const SETBACK = 1  // 필지 경계에서 1m 이격
 
     if (!parcel.geometry || parcel.geometry.length < 3) {
-      // geometry가 없으면 기본값 사용
-      const defaultWidth = Math.max((parcel.width || 8) - SETBACK * 2, 3)
-      const defaultDepth = Math.max((parcel.depth || 8) - SETBACK * 2, 3)
+      // geometry가 없으면 기본값 사용 (최대 10m)
+      const defaultWidth = Math.min(Math.max((parcel.width || 8) * 0.6, 3), 10)
+      const defaultDepth = Math.min(Math.max((parcel.depth || 8) * 0.6, 3), 10)
       return {
         width: defaultWidth,
         depth: defaultDepth,
@@ -839,17 +839,31 @@ function AdjacentParcelPolygon({
     const bboxCenterX = (minX + maxX) / 2
     const bboxCenterZ = (minZ + maxZ) / 2
 
-    // 건물 크기 계산: 1m 이격 적용
-    let buildingW = Math.max(parcelWidth - SETBACK * 2, 3)
-    let buildingD = Math.max(parcelDepth - SETBACK * 2, 3)
+    // 건물 크기 계산: 건폐율 60% 적용, 최대 15m 제한
+    const COVERAGE_RATIO = 0.6  // 건폐율 60%
+    const MAX_BUILDING_SIZE = 15  // 최대 건물 크기 15m
 
-    // 건축물대장 건축면적이 있으면 해당 면적에 맞게 조정
-    // building_area가 있으면 정사각형에 가깝게 조정
-    // (실제로는 건축면적을 사용할 수 있지만, 현재 API에서 building_area가 없으므로 비율 유지)
+    // 필지 면적의 건폐율만큼만 건물로 사용 (정사각형 근사)
+    const parcelArea = parcelWidth * parcelDepth
+    const buildingArea = parcelArea * COVERAGE_RATIO
+    const buildingSide = Math.sqrt(buildingArea)
+
+    // 필지 비율 유지하면서 건폐율 적용
+    const aspectRatio = parcelWidth / parcelDepth
+    let buildingW = Math.sqrt(buildingArea * aspectRatio)
+    let buildingD = buildingArea / buildingW
+
+    // 최소 3m, 최대 15m 제한
+    buildingW = Math.min(Math.max(buildingW, 3), MAX_BUILDING_SIZE)
+    buildingD = Math.min(Math.max(buildingD, 3), MAX_BUILDING_SIZE)
+
+    // 1m 이격 추가 확인 (필지 경계 안에 들어가도록)
+    buildingW = Math.min(buildingW, parcelWidth - SETBACK * 2)
+    buildingD = Math.min(buildingD, parcelDepth - SETBACK * 2)
 
     return {
-      width: buildingW,
-      depth: buildingD,
+      width: Math.max(buildingW, 3),
+      depth: Math.max(buildingD, 3),
       centerX: bboxCenterX,
       centerZ: bboxCenterZ,
     }
