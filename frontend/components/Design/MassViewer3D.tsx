@@ -866,37 +866,74 @@ function LandBoundary({
           // 도로 방향 결정 (카카오 API 기반, 기본값: south)
           const roadDirection = kakaoRoads?.[0]?.direction || 'south'
           const roadName = kakaoRoads?.[0]?.road_name || '도로'
+          const isNorthSouth = roadDirection === 'north' || roadDirection === 'south'
           const isNorth = roadDirection === 'north'
+          const isEast = roadDirection === 'east'
 
           // 필지 폴리곤에서 도로 접합 변의 각도 계산
           let roadRotation = 0 // Y축 회전 (라디안)
           let roadCenterX = 0
-          let roadCenterZ = isNorth ? depth / 2 + 4 : -depth / 2 - 4
+          let roadCenterZ = 0
+          let roadLength = width + 10
 
-          if (localPolygon && localPolygon.points.length >= 3) {
-            // 각 변의 중심 Z 좌표를 계산하여 가장 북쪽/남쪽 변 찾기
-            const edges = localPolygon.points.map((p, i) => {
-              const next = localPolygon.points[(i + 1) % localPolygon.points.length]
-              const midZ = (p[1] + next[1]) / 2  // Z = 위도 방향
-              const midX = (p[0] + next[0]) / 2
-              const dx = next[0] - p[0]
-              const dz = next[1] - p[1]
-              const angle = Math.atan2(dz, dx)
-              return { midZ, midX, angle, length: Math.sqrt(dx*dx + dz*dz) }
-            })
+          if (isNorthSouth) {
+            // 북/남 방향 도로
+            roadCenterZ = isNorth ? depth / 2 + 4 : -depth / 2 - 4
+            roadLength = width + 10
 
-            // 도로 방향에 따라 가장 북쪽 또는 남쪽 변 선택
-            const targetEdge = isNorth
-              ? edges.reduce((max, e) => e.midZ > max.midZ ? e : max, edges[0])
-              : edges.reduce((min, e) => e.midZ < min.midZ ? e : min, edges[0])
+            if (localPolygon && localPolygon.points.length >= 3) {
+              const edges = localPolygon.points.map((p, i) => {
+                const next = localPolygon.points[(i + 1) % localPolygon.points.length]
+                const midZ = (p[1] + next[1]) / 2
+                const midX = (p[0] + next[0]) / 2
+                const dx = next[0] - p[0]
+                const dz = next[1] - p[1]
+                const angle = Math.atan2(dz, dx)
+                return { midZ, midX, angle, length: Math.sqrt(dx*dx + dz*dz) }
+              })
 
-            roadRotation = -targetEdge.angle // Three.js Y축 회전
-            roadCenterX = targetEdge.midX
-            roadCenterZ = targetEdge.midZ + (isNorth ? 4 : -4)
+              const targetEdge = isNorth
+                ? edges.reduce((max, e) => e.midZ > max.midZ ? e : max, edges[0])
+                : edges.reduce((min, e) => e.midZ < min.midZ ? e : min, edges[0])
+
+              roadRotation = -targetEdge.angle
+              roadCenterX = targetEdge.midX
+              roadCenterZ = targetEdge.midZ + (isNorth ? 4 : -4)
+            }
+          } else {
+            // 동/서 방향 도로 (세로 방향 도로)
+            roadCenterX = isEast ? width / 2 + 4 : -width / 2 - 4
+            roadLength = depth + 10
+            roadRotation = Math.PI / 2 // 90도 회전
+
+            if (localPolygon && localPolygon.points.length >= 3) {
+              const edges = localPolygon.points.map((p, i) => {
+                const next = localPolygon.points[(i + 1) % localPolygon.points.length]
+                const midZ = (p[1] + next[1]) / 2
+                const midX = (p[0] + next[0]) / 2
+                const dx = next[0] - p[0]
+                const dz = next[1] - p[1]
+                const angle = Math.atan2(dz, dx)
+                return { midZ, midX, angle, length: Math.sqrt(dx*dx + dz*dz) }
+              })
+
+              const targetEdge = isEast
+                ? edges.reduce((max, e) => e.midX > max.midX ? e : max, edges[0])
+                : edges.reduce((min, e) => e.midX < min.midX ? e : min, edges[0])
+
+              roadRotation = -targetEdge.angle + Math.PI / 2
+              roadCenterX = targetEdge.midX + (isEast ? 4 : -4)
+              roadCenterZ = targetEdge.midZ
+            }
           }
 
-          // 도로 길이 (필지 너비 + 여유)
-          const roadLength = width + 10
+          // 방향 라벨
+          const directionLabel = {
+            north: '(북측)',
+            south: '(남측)',
+            east: '(동측)',
+            west: '(서측)',
+          }[roadDirection] || ''
 
           return (
             <group
@@ -925,8 +962,8 @@ function LandBoundary({
               {/* 도로 경계선 (대지측) */}
               <Line
                 points={[
-                  [-roadLength / 2, 0.02, isNorth ? -4 : 4],
-                  [roadLength / 2, 0.02, isNorth ? -4 : 4],
+                  [-roadLength / 2, 0.02, isNorth || isEast ? -4 : 4],
+                  [roadLength / 2, 0.02, isNorth || isEast ? -4 : 4],
                 ]}
                 color="#9ca3af"
                 lineWidth={2}
@@ -945,7 +982,7 @@ function LandBoundary({
                 {roadName}
               </Text>
 
-              {/* 도로 방향 표시 (북측/남측) */}
+              {/* 도로 방향 표시 */}
               <Text
                 position={[roadLength / 2 - 2, 0.5, 0]}
                 fontSize={0.8}
@@ -955,7 +992,7 @@ function LandBoundary({
                 outlineWidth={0.03}
                 outlineColor="#000000"
               >
-                {isNorth ? '(북측)' : '(남측)'}
+                {directionLabel}
               </Text>
 
               {/* 도로 방향 화살표 (양방향 통행) */}
