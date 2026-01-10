@@ -858,7 +858,7 @@ class VWorldService:
         import logging
         logger = logging.getLogger(__name__)
 
-        cache_key = f"adjacent_roads_v13:{pnu}"  # v13: WFS 디버깅
+        cache_key = f"adjacent_roads_v14:{pnu}"  # v14: 디버그 정보 추가
         cached = cache.get(cache_key)
         if cached:
             return cached
@@ -906,6 +906,7 @@ class VWorldService:
 
         roads = []
         adjacent_parcels = []  # 주변 필지 (도로 제외)
+        vworld_debug = {}  # 디버그 정보
 
         if self.api_key:
             try:
@@ -931,10 +932,15 @@ class VWorldService:
                 data = response.json()
 
                 # 디버깅: VWorld 응답 로그
-                logger.info(f"VWorld WFS response status: {data.get('response', {}).get('status')}")
+                vworld_status = data.get('response', {}).get('status')
+                vworld_debug['status'] = vworld_status
+                vworld_debug['bbox_str'] = bbox_str
+                logger.info(f"VWorld WFS response status: {vworld_status}")
                 logger.info(f"VWorld WFS bbox: {bbox_str}")
-                if data.get('response', {}).get('status') != 'OK':
-                    logger.warning(f"VWorld WFS error: {data.get('response', {}).get('error', {})}")
+                if vworld_status != 'OK':
+                    vworld_error = data.get('response', {}).get('error', {})
+                    vworld_debug['error'] = vworld_error
+                    logger.warning(f"VWorld WFS error: {vworld_error}")
 
                 if data.get('response', {}).get('status') == 'OK':
                     features = data['response'].get('result', {}).get('featureCollection', {}).get('features', [])
@@ -1004,6 +1010,7 @@ class VWorldService:
                             adjacent_parcels.append(parcel_data)
 
             except Exception as e:
+                vworld_debug['exception'] = str(e)
                 logger.error(f"VWorld WFS exception: {str(e)}")
 
         # VWorld에서 도로를 찾지 못한 경우 Kakao API로 도로명 조회 (fallback)
@@ -1153,6 +1160,11 @@ class VWorldService:
             'kakao_roads': kakao_roads,  # Kakao API에서 조회한 도로명 정보
             'parcel_center': parcel_center,
             'road_width': road_width,  # 도로 폭 정보 (use_zones에서 추출)
+            'debug': {
+                'has_api_key': bool(self.api_key),
+                'bbox': expanded_bbox if bbox else None,
+                'vworld': vworld_debug,
+            }
         }
         cache.set(cache_key, result, 604800)  # 7일
         return result
