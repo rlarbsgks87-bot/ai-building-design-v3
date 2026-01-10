@@ -327,6 +327,56 @@ class KakaoLocalService:
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
+    def get_parcel_road_address(self, address: str) -> dict:
+        """주소로 필지의 도로명주소 조회 (주소 검색 API)
+
+        Args:
+            address: 지번주소 (예: '제주시 도남동 50-11')
+
+        Returns:
+            dict: {
+                success: bool,
+                road_name: str,  # 도로명 (예: '신성로4길')
+                road_address: str,  # 전체 도로명 주소
+                direction: str,  # 도로 방향 (필지 도로명주소의 도로는 보통 전면 도로)
+            }
+        """
+        if not self.api_key:
+            return {'success': False, 'error': 'Kakao API 키가 설정되지 않았습니다'}
+
+        import urllib.parse
+        cache_key = f"kakao_parcel_road:{urllib.parse.quote(address)}"
+        cached = cache.get(cache_key)
+        if cached:
+            return cached
+
+        try:
+            url = f"{self.BASE_URL}/search/address.json"
+            headers = {'Authorization': f'KakaoAK {self.api_key}'}
+            params = {'query': address}
+
+            response = requests.get(url, headers=headers, params=params, timeout=self.timeout)
+            data = response.json()
+
+            if data.get('documents'):
+                doc = data['documents'][0]
+                road_address = doc.get('road_address') or {}
+
+                if road_address.get('road_name'):
+                    result = {
+                        'success': True,
+                        'road_name': road_address.get('road_name', ''),
+                        'road_address': road_address.get('address_name', ''),
+                        'direction': 'north',  # 기본값, 나중에 필지 형상으로 정확히 계산
+                    }
+                    cache.set(cache_key, result, 86400)  # 24시간
+                    return result
+
+            return {'success': False, 'error': '도로명주소를 찾을 수 없습니다'}
+
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
     def get_nearest_road(self, center_lng: float, center_lat: float, bbox: dict = None, search_directions: list = None) -> dict:
         """필지 주변 도로 정보 조회 (필지 경계 기준 검색)
 
@@ -806,7 +856,7 @@ class VWorldService:
         """
         import math
 
-        cache_key = f"adjacent_roads_v5:{pnu}"  # v5: VWorld 실패 처리
+        cache_key = f"adjacent_roads_v6:{pnu}"  # v6: 필지 중심 도로명 우선 조회
         cached = cache.get(cache_key)
         if cached:
             return cached
@@ -948,13 +998,58 @@ class VWorldService:
         if not roads:
             try:
                 kakao = KakaoLocalService()
-                kakao_result = kakao.get_nearest_road(
+                # 1. 필지 중심 좌표에서 직접 도로명 조회 (필지의 도로명주소에서 도로명 추출)
+                center_result = kakao.get_road_name_by_coord(
                     parcel_center['lng'],
-                    parcel_center['lat'],
-                    bbox=bbox  # 필지 경계 기준 검색
+                    parcel_center['lat']
                 )
-                if kakao_result.get('success'):
-                    kakao_roads = kakao_result.get('roads', [])
+                if center_result.get('success') and center_result.get('road_name'):
+                    # 필지 중심에서 찾은 도로명 = 필지가 접한 도로
+                    # 방향은 필지 형상에서 도로와 가장 가까운 변으로 결정
+                    # (기본적으로 도로명주소가 있는 필지는 해당 도로에 접함)
+                    road_name = center_result['road_name']
+                    road_address = center_result.get('road_address', '')
+
+                    # 방향 결정: 각 경계에서 도로를 검색하여 같은 도로명이 있는지 확인
+                    import math
+                    lat_offset = 5 / 111320  # 5m
+                    lng_offset = 5 / (111320 * math.cos(math.radians(parcel_center['lat'])))
+
+                    direction = 'unknown'
+                    if bbox:
+                        # 각 방향 5m 바깥에서 검색
+                        direction_checks = {
+                            'north': (parcel_center['lng'], bbox['maxY'] + lat_offset),
+                            'south': (parcel_center['lng'], bbox['minY'] - lat_offset),
+                            'east': (bbox['maxX'] + lng_offset, parcel_center['lat']),
+                            'west': (bbox['minX'] - lng_offset, parcel_center['lat']),
+                        }
+                        for dir_name, (check_lng, check_lat) in direction_checks.items():
+                            check_result = kakao.get_road_name_by_coord(check_lng, check_lat)
+                            if check_result.get('road_name') == road_name:
+                                direction = dir_name
+                                break
+
+                        # 같은 도로명을 찾지 못한 경우, 도로명주소 건물번호가 가장 낮은 방향 추정
+                        # (일반적으로 도로에서 가까운 쪽이 낮은 번호)
+                        if direction == 'unknown':
+                            # 도로명주소가 있으면 보통 북쪽 방향으로 가정 (제주도 도로 특성)
+                            direction = 'north'
+
+                    kakao_roads.append({
+                        'direction': direction,
+                        'road_name': road_name,
+                        'road_address': road_address,
+                    })
+                else:
+                    # 2. 필지 중심에서 도로명을 찾지 못한 경우 경계 검색으로 fallback
+                    kakao_result = kakao.get_nearest_road(
+                        parcel_center['lng'],
+                        parcel_center['lat'],
+                        bbox=bbox
+                    )
+                    if kakao_result.get('success'):
+                        kakao_roads = kakao_result.get('roads', [])
             except Exception:
                 pass
 
