@@ -95,6 +95,7 @@ interface AdjacentParcel {
   depth?: number                // 건물 깊이 (미터)
   name?: string                 // 건물명
   main_purpose?: string         // 주용도 (예: "제1종근린생활시설")
+  has_registry?: boolean        // 건축물대장 데이터 여부
 }
 
 interface KakaoRoad {
@@ -219,7 +220,8 @@ function DesignPageContent() {
                 ...b,
                 jimok: b.jimok || '',
               })) as AdjacentParcel[]
-              console.log('Building footprints loaded:', adjacentParcels.length, 'buildings')
+              const withRegistry = adjacentParcels.filter(p => p.has_registry && (p.height ?? 0) > 0)
+              console.log('Building footprints loaded:', adjacentParcels.length, 'buildings,', withRegistry.length, 'with registry+height')
             } else if (roadsResponse.adjacent_parcels && roadsResponse.adjacent_parcels.length > 0) {
               // 건물 API 실패 시 기존 adjacent_parcels 사용 (fallback)
               adjacentParcels = roadsResponse.adjacent_parcels as AdjacentParcel[]

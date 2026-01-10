@@ -722,6 +722,13 @@ function AdjacentParcelPolygon({
   parcel: AdjacentParcel
   landCenter: [number, number]  // [lng, lat] 대지 중심점
 }) {
+  // 디버그: 건축물대장 건물 확인
+  useEffect(() => {
+    if (parcel.has_registry) {
+      console.log('Registry building:', parcel.pnu, 'height:', parcel.height, 'geometry:', parcel.geometry?.length || 0, 'points')
+    }
+  }, [parcel])
+
   // 필지 폴리곤을 대지 중심 기준 로컬 좌표로 변환
   const { parcelShape, boundaryPoints, labelPosition, jimokLabel } = useMemo(() => {
     if (!parcel.geometry || parcel.geometry.length < 3) {
@@ -785,15 +792,20 @@ function AdjacentParcelPolygon({
     }
   }
 
-  // 건물 높이가 있으면 3D 박스 렌더링
-  const buildingHeight = parcel.height || 0
+  // 건물 높이 (건축물대장 데이터 기반)
+  const buildingHeight = parcel.height || (parcel.floors ? parcel.floors * 3 : 0)
 
-  // 필지 폴리곤에서 실제 크기와 바운딩 박스 중심 계산 (건물 박스가 필지 경계 안에 들어가도록)
-  const parcelBoundingBox = useMemo(() => {
+  // 필지 폴리곤에서 건물 박스 크기와 위치 계산 (1m 이격, 건축물대장 데이터 활용)
+  const buildingBox = useMemo(() => {
+    const SETBACK = 1  // 필지 경계에서 1m 이격
+
     if (!parcel.geometry || parcel.geometry.length < 3) {
+      // geometry가 없으면 기본값 사용
+      const defaultWidth = Math.max((parcel.width || 8) - SETBACK * 2, 3)
+      const defaultDepth = Math.max((parcel.depth || 8) - SETBACK * 2, 3)
       return {
-        width: parcel.width || 8,
-        depth: parcel.depth || 8,
+        width: defaultWidth,
+        depth: defaultDepth,
         centerX: labelPosition[0],
         centerZ: labelPosition[2],
       }
@@ -819,26 +831,34 @@ function AdjacentParcelPolygon({
     const minZ = Math.min(...zs)
     const maxZ = Math.max(...zs)
 
-    const width = maxX - minX
-    const depth = maxZ - minZ
+    // 필지 바운딩 박스 크기
+    const parcelWidth = maxX - minX
+    const parcelDepth = maxZ - minZ
 
-    // 바운딩 박스의 중심 (필지 centroid가 아닌 bbox 중심)
+    // 바운딩 박스 중심
     const bboxCenterX = (minX + maxX) / 2
     const bboxCenterZ = (minZ + maxZ) / 2
 
-    // 건물은 필지보다 약간 작게 (80% 크기, 최대 15m)
+    // 건물 크기 계산: 1m 이격 적용
+    let buildingW = Math.max(parcelWidth - SETBACK * 2, 3)
+    let buildingD = Math.max(parcelDepth - SETBACK * 2, 3)
+
+    // 건축물대장 건축면적이 있으면 해당 면적에 맞게 조정
+    // building_area가 있으면 정사각형에 가깝게 조정
+    // (실제로는 건축면적을 사용할 수 있지만, 현재 API에서 building_area가 없으므로 비율 유지)
+
     return {
-      width: Math.min(width * 0.8, 15),
-      depth: Math.min(depth * 0.8, 15),
+      width: buildingW,
+      depth: buildingD,
       centerX: bboxCenterX,
       centerZ: bboxCenterZ,
     }
   }, [parcel.geometry, parcel.width, parcel.depth, landCenter, labelPosition])
 
-  const buildingWidth = parcelBoundingBox.width
-  const buildingDepth = parcelBoundingBox.depth
-  const buildingCenterX = parcelBoundingBox.centerX
-  const buildingCenterZ = parcelBoundingBox.centerZ
+  const buildingWidth = buildingBox.width
+  const buildingDepth = buildingBox.depth
+  const buildingCenterX = buildingBox.centerX
+  const buildingCenterZ = buildingBox.centerZ
 
   return (
     <group>
