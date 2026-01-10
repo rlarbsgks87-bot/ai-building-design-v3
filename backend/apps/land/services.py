@@ -327,17 +327,18 @@ class KakaoLocalService:
         except Exception as e:
             return {'success': False, 'error': str(e)}
 
-    def get_nearest_road(self, center_lng: float, center_lat: float, search_directions: list = None) -> dict:
-        """필지 주변 도로 정보 조회 (여러 방향 검색)
+    def get_nearest_road(self, center_lng: float, center_lat: float, bbox: dict = None, search_directions: list = None) -> dict:
+        """필지 주변 도로 정보 조회 (필지 경계 기준 검색)
 
         Args:
             center_lng, center_lat: 필지 중심 좌표
+            bbox: 필지 바운딩 박스 {minX, minY, maxX, maxY}
             search_directions: 검색할 방향 리스트 ['south', 'north', 'east', 'west']
 
         Returns:
             dict: {
                 success: bool,
-                roads: [{ direction, road_name, distance }]
+                roads: [{ direction, road_name, road_address }]
             }
         """
         import math
@@ -345,27 +346,34 @@ class KakaoLocalService:
         if not search_directions:
             search_directions = ['south', 'north', 'east', 'west']
 
-        # 방향별 오프셋 (약 20m)
-        offset_meters = 20
+        # bbox가 있으면 경계 바깥쪽을 검색, 없으면 중심에서 20m 검색
+        offset_meters = 10  # 경계에서 10m 바깥
         lat_offset = offset_meters / 111320
         lng_offset = offset_meters / (111320 * math.cos(math.radians(center_lat)))
 
-        direction_offsets = {
-            'south': (0, -lat_offset),
-            'north': (0, lat_offset),
-            'east': (lng_offset, 0),
-            'west': (-lng_offset, 0),
-        }
+        if bbox:
+            # 필지 경계 바깥쪽 좌표 계산
+            search_points = {
+                'south': (center_lng, bbox['minY'] - lat_offset),
+                'north': (center_lng, bbox['maxY'] + lat_offset),
+                'east': (bbox['maxX'] + lng_offset, center_lat),
+                'west': (bbox['minX'] - lng_offset, center_lat),
+            }
+        else:
+            # bbox 없으면 중심에서 검색
+            search_points = {
+                'south': (center_lng, center_lat - lat_offset * 2),
+                'north': (center_lng, center_lat + lat_offset * 2),
+                'east': (center_lng + lng_offset * 2, center_lat),
+                'west': (center_lng - lng_offset * 2, center_lat),
+            }
 
         roads = []
         for direction in search_directions:
-            if direction not in direction_offsets:
+            if direction not in search_points:
                 continue
 
-            d_lng, d_lat = direction_offsets[direction]
-            search_lng = center_lng + d_lng
-            search_lat = center_lat + d_lat
-
+            search_lng, search_lat = search_points[direction]
             result = self.get_road_name_by_coord(search_lng, search_lat)
             if result.get('success') and result.get('road_name'):
                 roads.append({
@@ -798,7 +806,7 @@ class VWorldService:
         """
         import math
 
-        cache_key = f"adjacent_roads_v2:{pnu}"  # v2: Kakao fallback 추가
+        cache_key = f"adjacent_roads_v3:{pnu}"  # v3: 경계 기준 검색
         cached = cache.get(cache_key)
         if cached:
             return cached
@@ -933,7 +941,8 @@ class VWorldService:
                 kakao = KakaoLocalService()
                 kakao_result = kakao.get_nearest_road(
                     parcel_center['lng'],
-                    parcel_center['lat']
+                    parcel_center['lat'],
+                    bbox=bbox  # 필지 경계 기준 검색
                 )
                 if kakao_result.get('success'):
                     kakao_roads = kakao_result.get('roads', [])
