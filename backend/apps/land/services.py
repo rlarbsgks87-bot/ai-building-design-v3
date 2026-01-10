@@ -346,8 +346,8 @@ class KakaoLocalService:
         if not search_directions:
             search_directions = ['south', 'north', 'east', 'west']
 
-        # bbox가 있으면 경계 바깥쪽을 검색, 없으면 중심에서 20m 검색
-        offset_meters = 10  # 경계에서 10m 바깥
+        # bbox가 있으면 경계 바깥쪽을 검색 (도로까지 충분한 거리)
+        offset_meters = 30  # 경계에서 30m 바깥 (도로 도달 보장)
         lat_offset = offset_meters / 111320
         lng_offset = offset_meters / (111320 * math.cos(math.radians(center_lat)))
 
@@ -806,7 +806,7 @@ class VWorldService:
         """
         import math
 
-        cache_key = f"adjacent_roads_v3:{pnu}"  # v3: 경계 기준 검색
+        cache_key = f"adjacent_roads_v4:{pnu}"  # v4: 30m 오프셋
         cached = cache.get(cache_key)
         if cached:
             return cached
