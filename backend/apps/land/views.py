@@ -209,6 +209,50 @@ class AdjacentRoadsView(APIView):
         }, status=status.HTTP_404_NOT_FOUND)
 
 
+class BuildingFootprintsView(APIView):
+    """주변 건물 footprint 조회 API (VWorld 건축물정보 레이어)"""
+
+    def get(self, request, pnu):
+        vworld = VWorldService()
+
+        # 필지 지오메트리로 bbox 가져오기
+        parcel_geom = vworld.get_parcel_geometry(pnu)
+        if not parcel_geom.get('success'):
+            return Response({
+                'success': False,
+                'error': 'NOT_FOUND',
+                'message': '필지 지오메트리를 찾을 수 없습니다.',
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        bbox = parcel_geom.get('bbox')
+        if not bbox:
+            return Response({
+                'success': False,
+                'error': 'INVALID_GEOMETRY',
+                'message': '유효한 bbox가 없습니다.',
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # bbox 확장 (약 50m 버퍼)
+        buffer = 0.0005  # 약 50m
+        expanded_bbox = {
+            'minX': bbox['minX'] - buffer,
+            'minY': bbox['minY'] - buffer,
+            'maxX': bbox['maxX'] + buffer,
+            'maxY': bbox['maxY'] + buffer,
+        }
+
+        result = vworld.get_building_footprints(expanded_bbox, target_pnu=pnu)
+
+        if result.get('success'):
+            return Response(result)
+
+        return Response({
+            'success': False,
+            'error': 'NOT_FOUND',
+            'message': result.get('error', '건물 정보를 찾을 수 없습니다.'),
+        }, status=status.HTTP_404_NOT_FOUND)
+
+
 class LandAnalysisView(APIView):
     """주소 기반 토지 분석 API (Lambda 프록시 사용)
 

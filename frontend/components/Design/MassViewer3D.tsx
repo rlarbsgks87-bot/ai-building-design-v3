@@ -80,13 +80,18 @@ interface AdjacentParcel {
   pnu: string
   geometry: [number, number][]  // [lng, lat][] 폴리곤 좌표
   jimok: string                 // 지목 (대, 전, 답 등)
-  jibun: string                 // 지번
+  jibun?: string                // 지번 (선택)
   direction: 'north' | 'south' | 'east' | 'west' | 'unknown'
   center: { lng: number; lat: number }
   height?: number               // 건물 높이 (미터)
-  floors?: number               // 층수
+  floors?: number               // 지상 층수
+  underground_floors?: number   // 지하 층수
   width?: number                // 건물/필지 폭 (미터)
   depth?: number                // 건물/필지 깊이 (미터)
+  name?: string                 // 건물명 (건축물대장)
+  main_purpose?: string         // 주용도 (예: "제1종근린생활시설")
+  bd_mgt_sn?: string            // 건물관리번호
+  has_registry?: boolean        // 건축물대장 데이터 여부
 }
 
 interface MassViewer3DProps {
@@ -126,8 +131,9 @@ function convertPolygonToLocal(polygon: [number, number][]): { points: [number, 
   const metersPerDegreeLng = 111320 * Math.cos(centerLat * Math.PI / 180)
 
   // 폴리곤 좌표를 로컬 미터로 변환 (중심 기준)
+  // X축 반전: 동쪽(높은 경도) = -X, 서쪽(낮은 경도) = +X
   const points: [number, number][] = polygon.map(([lng, lat]) => {
-    const x = (lng - centerLng) * metersPerDegreeLng
+    const x = -(lng - centerLng) * metersPerDegreeLng
     const z = (lat - centerLat) * metersPerDegreeLat
     return [x, z]
   })
@@ -153,7 +159,8 @@ function offsetPolygon(points: [number, number][], offset: number): [number, num
 }
 
 // 방향별 이격거리를 적용하는 폴리곤 축소
-// setbacks: { front(남쪽/-Z), back(북쪽/+Z), left(-X), right(+X) }
+// setbacks: { front(남쪽/-Z), back(북쪽/+Z), left(서쪽/+X), right(동쪽/-X) }
+// X축 반전됨: 동쪽=-X, 서쪽=+X
 function offsetPolygonDirectional(
   points: [number, number][],
   setbacks: { front: number; back: number; left: number; right: number }
@@ -203,13 +210,14 @@ function offsetPolygonDirectional(
       const relZ = curr[1] - centerZ
 
       // 방향별 이격거리 선택 (주요 방향 기준)
+      // X축 반전: +X=서쪽(left), -X=동쪽(right)
       let offset: number
       if (Math.abs(relZ) > Math.abs(relX)) {
         // Z 방향이 더 멀면 (북쪽/남쪽)
         offset = relZ > 0 ? setbacks.back : setbacks.front
       } else {
-        // X 방향이 더 멀면 (동쪽/서쪽)
-        offset = relX > 0 ? setbacks.right : setbacks.left
+        // X 방향이 더 멀면: +X=서쪽(left), -X=동쪽(right)
+        offset = relX > 0 ? setbacks.left : setbacks.right
       }
 
       result.push([
@@ -245,9 +253,10 @@ function getMaxInscribedRect(points: [number, number][]): {
   const centerZ = sumZ / points.length
 
   // 중심에서 각 방향으로 경계까지 거리 측정 (Ray Casting)
+  // X축 반전: +X=서쪽, -X=동쪽
   const directions = [
-    [1, 0],   // 동쪽 (+X)
-    [-1, 0],  // 서쪽 (-X)
+    [1, 0],   // 서쪽 (+X)
+    [-1, 0],  // 동쪽 (-X)
     [0, 1],   // 북쪽 (+Z)
     [0, -1],  // 남쪽 (-Z)
   ]
@@ -402,9 +411,10 @@ function BuildingMass({ building, landDimensions, landPolygon, floorSetbacks, us
   const buildingHeight = building.floors * building.floorHeight
 
   // 건물 중심 위치 계산 (폴리곤 기반 또는 bounding box 기반)
+  // X축 반전됨: +X=서쪽, -X=동쪽. left=서쪽(+X), right=동쪽(-X)
   const centerX = buildableArea
     ? buildableArea.centerX
-    : (building.setbacks.left - building.setbacks.right) / 2
+    : (building.setbacks.right - building.setbacks.left) / 2  // X축 반전으로 부호 반전
   // Z: 전면 이격거리부터 시작해서 가용 깊이의 중앙 (북쪽이 +Z)
   const baseCenterZ = buildableArea
     ? buildableArea.centerZ
@@ -632,9 +642,9 @@ function RoadPolygon({
     const metersPerDegreeLat = 111320
     const metersPerDegreeLng = 111320 * Math.cos(centerLat * Math.PI / 180)
 
-    // 폴리곤 좌표 변환
+    // 폴리곤 좌표 변환 (X축 반전)
     const localPoints: [number, number][] = road.geometry.map(([lng, lat]) => {
-      const x = (lng - centerLng) * metersPerDegreeLng
+      const x = -(lng - centerLng) * metersPerDegreeLng
       const z = (lat - centerLat) * metersPerDegreeLat
       return [x, z]
     })
@@ -654,7 +664,7 @@ function RoadPolygon({
     }
 
     // 라벨 위치 (도로 중심)
-    const roadCenterX = (road.center.lng - centerLng) * metersPerDegreeLng
+    const roadCenterX = -(road.center.lng - centerLng) * metersPerDegreeLng
     const roadCenterZ = (road.center.lat - centerLat) * metersPerDegreeLat
 
     // 방향 라벨
@@ -712,6 +722,13 @@ function AdjacentParcelPolygon({
   parcel: AdjacentParcel
   landCenter: [number, number]  // [lng, lat] 대지 중심점
 }) {
+  // 디버그: 건축물대장 데이터가 있는 건물 로그
+  useEffect(() => {
+    if (parcel.has_registry) {
+      console.log('Rendering registry building:', parcel.pnu, 'height:', parcel.height, 'floors:', parcel.floors)
+    }
+  }, [parcel])
+
   // 필지 폴리곤을 대지 중심 기준 로컬 좌표로 변환
   const { parcelShape, boundaryPoints, labelPosition, jimokLabel } = useMemo(() => {
     if (!parcel.geometry || parcel.geometry.length < 3) {
@@ -725,9 +742,9 @@ function AdjacentParcelPolygon({
     const metersPerDegreeLat = 111320
     const metersPerDegreeLng = 111320 * Math.cos(centerLat * Math.PI / 180)
 
-    // 폴리곤 좌표 변환
+    // 폴리곤 좌표 변환 (X축 반전)
     const localPoints: [number, number][] = parcel.geometry.map(([lng, lat]) => {
-      const x = (lng - centerLng) * metersPerDegreeLng
+      const x = -(lng - centerLng) * metersPerDegreeLng
       const z = (lat - centerLat) * metersPerDegreeLat
       return [x, z]
     })
@@ -747,7 +764,7 @@ function AdjacentParcelPolygon({
     }
 
     // 라벨 위치 (필지 중심)
-    const parcelCenterX = (parcel.center.lng - centerLng) * metersPerDegreeLng
+    const parcelCenterX = -(parcel.center.lng - centerLng) * metersPerDegreeLng
     const parcelCenterZ = (parcel.center.lat - centerLat) * metersPerDegreeLat
 
     // 지목 라벨 (지번에서 숫자 제거)
@@ -777,9 +794,58 @@ function AdjacentParcelPolygon({
 
   // 건물 높이가 있으면 3D 박스 렌더링
   const buildingHeight = parcel.height || 0
-  // 건물 크기 (API에서 제공하거나 기본값 8m)
-  const buildingWidth = parcel.width || 8
-  const buildingDepth = parcel.depth || 8
+
+  // 필지 폴리곤에서 실제 크기와 바운딩 박스 중심 계산 (건물 박스가 필지 경계 안에 들어가도록)
+  const parcelBoundingBox = useMemo(() => {
+    if (!parcel.geometry || parcel.geometry.length < 3) {
+      return {
+        width: parcel.width || 8,
+        depth: parcel.depth || 8,
+        centerX: labelPosition[0],
+        centerZ: labelPosition[2],
+      }
+    }
+
+    const centerLng = landCenter[0]
+    const centerLat = landCenter[1]
+    const metersPerDegreeLat = 111320
+    const metersPerDegreeLng = 111320 * Math.cos(centerLat * Math.PI / 180)
+
+    // 로컬 좌표로 변환
+    const localPoints = parcel.geometry.map(([lng, lat]) => {
+      const x = -(lng - centerLng) * metersPerDegreeLng
+      const z = (lat - centerLat) * metersPerDegreeLat
+      return { x, z }
+    })
+
+    // 바운딩 박스 계산
+    const xs = localPoints.map(p => p.x)
+    const zs = localPoints.map(p => p.z)
+    const minX = Math.min(...xs)
+    const maxX = Math.max(...xs)
+    const minZ = Math.min(...zs)
+    const maxZ = Math.max(...zs)
+
+    const width = maxX - minX
+    const depth = maxZ - minZ
+
+    // 바운딩 박스의 중심 (필지 centroid가 아닌 bbox 중심)
+    const bboxCenterX = (minX + maxX) / 2
+    const bboxCenterZ = (minZ + maxZ) / 2
+
+    // 건물은 필지보다 약간 작게 (80% 크기, 최대 15m)
+    return {
+      width: Math.min(width * 0.8, 15),
+      depth: Math.min(depth * 0.8, 15),
+      centerX: bboxCenterX,
+      centerZ: bboxCenterZ,
+    }
+  }, [parcel.geometry, parcel.width, parcel.depth, landCenter, labelPosition])
+
+  const buildingWidth = parcelBoundingBox.width
+  const buildingDepth = parcelBoundingBox.depth
+  const buildingCenterX = parcelBoundingBox.centerX
+  const buildingCenterZ = parcelBoundingBox.centerZ
 
   return (
     <group>
@@ -801,30 +867,33 @@ function AdjacentParcelPolygon({
         lineWidth={1.5}
       />
 
-      {/* 주변 건물 3D 박스 (높이가 있을 때만) */}
-      {buildingHeight > 0 && (
-        <mesh position={[labelPosition[0], buildingHeight / 2, labelPosition[2]]} castShadow receiveShadow>
-          <boxGeometry args={[buildingWidth, buildingHeight, buildingDepth]} />
+      {/* 주변 건물 3D 박스 (건축물대장 데이터가 있고 높이가 있을 때만) - 바운딩 박스 중심에 배치 */}
+      {parcel.has_registry && buildingHeight > 0 && (
+        <mesh position={[buildingCenterX, buildingHeight / 2, buildingCenterZ]} castShadow receiveShadow>
+          <boxGeometry args={[Math.max(buildingWidth, 3), buildingHeight, Math.max(buildingDepth, 3)]} />
           <meshStandardMaterial
-            color="#9ca3af"  // 회색 건물
+            color="#6b7280"  // 진한 회색 건물
             transparent
-            opacity={0.6}
+            opacity={0.7}
           />
         </mesh>
       )}
 
-      {/* 지번/층수 라벨 */}
-      {(parcel.jibun || parcel.floors) && (
+      {/* 건물명/층수 라벨 - 건축물대장 데이터가 있을 때만 */}
+      {parcel.has_registry && (parcel.name || parcel.floors) && (
         <Text
-          position={[labelPosition[0], buildingHeight + 0.5, labelPosition[2]]}
-          fontSize={0.8}
+          position={[buildingCenterX, buildingHeight + 0.5, buildingCenterZ]}
+          fontSize={parcel.name ? 1.0 : 0.8}
           color="#ffffff"
           anchorX="center"
           rotation={[-Math.PI / 2, 0, 0]}
           outlineWidth={0.03}
           outlineColor="#000000"
         >
-          {parcel.floors ? `${parcel.jibun} ${parcel.floors}F` : parcel.jibun}
+          {parcel.name
+            ? `${parcel.name}${parcel.floors ? ` ${parcel.floors}F` : ''}`
+            : `${parcel.floors}F`
+          }
         </Text>
       )}
     </group>
@@ -1081,7 +1150,8 @@ function LandBoundary({
             }
           } else {
             // 동/서 방향 도로 (세로 방향 도로)
-            roadCenterX = isEast ? width / 2 + halfRoadWidth : -width / 2 - halfRoadWidth
+            // X축 반전: 동쪽=-X, 서쪽=+X
+            roadCenterX = isEast ? -width / 2 - halfRoadWidth : width / 2 + halfRoadWidth
             roadLength = depth + 10
             roadRotation = Math.PI / 2 // 90도 회전
 
@@ -1096,12 +1166,13 @@ function LandBoundary({
                 return { midZ, midX, angle, length: Math.sqrt(dx*dx + dz*dz) }
               })
 
+              // X축 반전: 동쪽=min X(-X), 서쪽=max X(+X)
               const targetEdge = isEast
-                ? edges.reduce((max, e) => e.midX > max.midX ? e : max, edges[0])
-                : edges.reduce((min, e) => e.midX < min.midX ? e : min, edges[0])
+                ? edges.reduce((min, e) => e.midX < min.midX ? e : min, edges[0])
+                : edges.reduce((max, e) => e.midX > max.midX ? e : max, edges[0])
 
               roadRotation = -targetEdge.angle + Math.PI / 2
-              roadCenterX = targetEdge.midX + (isEast ? halfRoadWidth : -halfRoadWidth)
+              roadCenterX = targetEdge.midX + (isEast ? -halfRoadWidth : halfRoadWidth)
               roadCenterZ = targetEdge.midZ
             }
           }

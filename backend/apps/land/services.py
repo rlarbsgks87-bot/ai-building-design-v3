@@ -1,8 +1,112 @@
 import requests
+import math
 from django.conf import settings
 from django.core.cache import cache
 
 from apps.core.constants import get_building_limits
+
+
+def point_in_polygon(x: float, y: float, polygon: list) -> bool:
+    """점이 폴리곤 내부에 있는지 확인 (Ray Casting 알고리즘)
+
+    Args:
+        x, y: 점의 좌표
+        polygon: [[x, y], ...] 형태의 폴리곤 좌표 리스트
+
+    Returns:
+        bool: 점이 폴리곤 내부에 있으면 True
+    """
+    n = len(polygon)
+    inside = False
+
+    j = n - 1
+    for i in range(n):
+        xi, yi = polygon[i][0], polygon[i][1]
+        xj, yj = polygon[j][0], polygon[j][1]
+
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+
+    return inside
+
+
+def polygon_intersects(poly1: list, poly2: list) -> bool:
+    """두 폴리곤이 교차하는지 확인 (간소화된 버전 - 중심점 기반)
+
+    Args:
+        poly1, poly2: [[x, y], ...] 형태의 폴리곤 좌표 리스트
+
+    Returns:
+        bool: 교차하면 True
+    """
+    if not poly1 or not poly2:
+        return False
+
+    # poly1의 중심이 poly2 내부에 있는지 확인
+    cx1 = sum(p[0] for p in poly1) / len(poly1)
+    cy1 = sum(p[1] for p in poly1) / len(poly1)
+    if point_in_polygon(cx1, cy1, poly2):
+        return True
+
+    # poly2의 중심이 poly1 내부에 있는지 확인
+    cx2 = sum(p[0] for p in poly2) / len(poly2)
+    cy2 = sum(p[1] for p in poly2) / len(poly2)
+    if point_in_polygon(cx2, cy2, poly1):
+        return True
+
+    return False
+
+
+def calculate_min_distance_to_polygon(point: tuple, polygon: list) -> float:
+    """점에서 폴리곤 경계까지의 최소 거리 계산 (미터 단위)
+
+    Args:
+        point: (x, y) 좌표 (WGS84)
+        polygon: [[x, y], ...] 형태의 폴리곤 좌표 리스트 (WGS84)
+
+    Returns:
+        float: 최소 거리 (미터). 내부에 있으면 음수 반환
+    """
+    if not polygon:
+        return float('inf')
+
+    x, y = point
+
+    # 점이 내부에 있으면 음수 반환
+    if point_in_polygon(x, y, polygon):
+        return -1.0
+
+    # WGS84 → 미터 변환 계수
+    lat_rad = math.radians(y)
+    meters_per_lng = 111320 * math.cos(lat_rad)
+    meters_per_lat = 111320
+
+    min_dist = float('inf')
+    n = len(polygon)
+
+    for i in range(n):
+        x1, y1 = polygon[i]
+        x2, y2 = polygon[(i + 1) % n]
+
+        # 점에서 선분까지의 거리 계산
+        dx = (x2 - x1) * meters_per_lng
+        dy = (y2 - y1) * meters_per_lat
+        px = (x - x1) * meters_per_lng
+        py = (y - y1) * meters_per_lat
+
+        line_len_sq = dx * dx + dy * dy
+        if line_len_sq == 0:
+            dist = math.sqrt(px * px + py * py)
+        else:
+            t = max(0, min(1, (px * dx + py * dy) / line_len_sq))
+            proj_x = t * dx
+            proj_y = t * dy
+            dist = math.sqrt((px - proj_x) ** 2 + (py - proj_y) ** 2)
+
+        min_dist = min(min_dist, dist)
+
+    return min_dist
 
 
 class DataGoKrService:
@@ -854,20 +958,21 @@ class VWorldService:
                 ]
             }
         """
-        import math
-
-        cache_key = f"adjacent_roads_v17:{pnu}"  # v17: Lambda nearby 사용
+        cache_key = f"adjacent_roads_v18:{pnu}"  # v18: 겹침 필터링 추가
         cached = cache.get(cache_key)
         if cached:
             return cached
 
         # bbox가 없으면 먼저 필지 지오메트리를 조회
         parcel_center = None
+        target_polygon = None  # 대상 필지 폴리곤 (겹침 필터링용)
         if not bbox:
             parcel_geom = self.get_parcel_geometry(pnu)
             if parcel_geom.get('success'):
                 bbox = parcel_geom.get('bbox')
                 parcel_center = parcel_geom.get('center', {})
+                # 대상 필지 폴리곤 저장
+                target_polygon = parcel_geom.get('geometry', [])
             # 지오메트리 실패해도 계속 진행 (Kakao fallback 사용)
 
         if bbox and not parcel_center:
@@ -947,6 +1052,24 @@ class VWorldService:
                     # 중심점 계산 (WGS84)
                     center_lng = parcel_center['lng'] + building.get('x', 0) / meters_per_lng
                     center_lat = parcel_center['lat'] + building.get('y', 0) / meters_per_lat
+
+                    # ===== 겹침 필터링 (대상 필지와 겹치는 건물 제외) =====
+                    if target_polygon and len(target_polygon) >= 3:
+                        # 1. 건물 중심이 대상 필지 내부에 있으면 제외
+                        if point_in_polygon(center_lng, center_lat, target_polygon):
+                            continue
+
+                        # 2. 건물 폴리곤이 대상 필지와 교차하면 제외
+                        if polygon_intersects(polygon_coords, target_polygon):
+                            continue
+
+                        # 3. 건물 중심이 대상 필지 경계에서 2m 이내면 제외 (너무 가까운 건물)
+                        dist = calculate_min_distance_to_polygon(
+                            (center_lng, center_lat), target_polygon
+                        )
+                        if dist < 2.0:  # 2m 이내
+                            continue
+                    # ===== 겹침 필터링 끝 =====
 
                     # 필지 중심과의 상대 위치로 방향 결정
                     dx = building.get('x', 0)
@@ -1249,6 +1372,319 @@ class VWorldService:
             return result
 
         return {'success': False, 'error': '필지 지오메트리를 찾을 수 없습니다'}
+
+    def get_building_footprints(self, bbox: dict, target_pnu: str = None) -> dict:
+        """주변 건물 footprint 조회 (VWorld 건축물정보 레이어)
+
+        Args:
+            bbox: 바운딩 박스 {minX, minY, maxX, maxY} (WGS84)
+            target_pnu: 제외할 대상 필지 PNU (선택)
+
+        Returns:
+            dict: {
+                success: bool,
+                buildings: [
+                    {
+                        pnu: str,
+                        geometry: [[lng, lat], ...],  # 건물 폴리곤
+                        center: {lng, lat},
+                        height: float,  # 미터
+                        floors: int,
+                        name: str,
+                        main_purpose: str,
+                        direction: str  # 'north', 'south', 'east', 'west'
+                    }
+                ]
+            }
+        """
+        if not bbox:
+            return {'success': False, 'error': 'bbox 필요', 'buildings': []}
+
+        cache_key = f"building_footprints_v2:{bbox['minX']:.6f},{bbox['minY']:.6f},{bbox['maxX']:.6f},{bbox['maxY']:.6f}"
+        cached = cache.get(cache_key)
+        if cached:
+            return cached
+
+        buildings = []
+
+        # 대상 필지 폴리곤 가져오기 (겹침 필터링용)
+        target_polygon = None
+        if target_pnu:
+            target_geom = self.get_parcel_geometry(target_pnu)
+            if target_geom.get('success'):
+                target_polygon = target_geom.get('geometry', [])
+
+        # 1차: Lambda 프록시를 통해 건물 정보 가져오기
+        try:
+            center_lng = (bbox['minX'] + bbox['maxX']) / 2
+            center_lat = (bbox['minY'] + bbox['maxY']) / 2
+
+            # Lambda nearby API 호출 (건물 정보 포함)
+            nearby_url = f"{self.lambda_proxy.base_url}?type=nearby&pnu={target_pnu or ''}&x={center_lng}&y={center_lat}&radius=100"
+            response = requests.get(nearby_url, timeout=20)
+            data = response.json()
+
+            if 'buildings' in data:
+                lat_rad = math.radians(center_lat)
+                meters_per_lat = 111320
+                meters_per_lng = 111320 * math.cos(lat_rad)
+
+                for building in data.get('buildings', []):
+                    feature_pnu = building.get('pnu', '')
+
+                    # 대상 필지 제외
+                    if target_pnu and feature_pnu == target_pnu:
+                        continue
+
+                    # 폴리곤 좌표 변환 (상대 미터 → WGS84)
+                    polygon_rel = building.get('polygon', [])
+                    polygon_coords = []
+                    for point in polygon_rel:
+                        lng = center_lng + point['x'] / meters_per_lng
+                        lat = center_lat + point['y'] / meters_per_lat
+                        polygon_coords.append([lng, lat])
+
+                    if not polygon_coords:
+                        continue
+
+                    # 중심점 계산
+                    bldg_center_lng = center_lng + building.get('x', 0) / meters_per_lng
+                    bldg_center_lat = center_lat + building.get('y', 0) / meters_per_lat
+
+                    # ===== 겹침 필터링 (대상 필지와 겹치는 건물 제외) =====
+                    if target_polygon and len(target_polygon) >= 3:
+                        # 1. 건물 중심이 대상 필지 내부에 있으면 제외
+                        if point_in_polygon(bldg_center_lng, bldg_center_lat, target_polygon):
+                            continue
+                        # 2. 건물 폴리곤이 대상 필지와 교차하면 제외
+                        if polygon_intersects(polygon_coords, target_polygon):
+                            continue
+                        # 3. 건물 중심이 대상 필지 경계에서 2m 이내면 제외
+                        dist = calculate_min_distance_to_polygon(
+                            (bldg_center_lng, bldg_center_lat), target_polygon
+                        )
+                        if dist < 2.0:
+                            continue
+                    # ===== 겹침 필터링 끝 =====
+
+                    # 방향 결정
+                    dx = building.get('x', 0)
+                    dy = building.get('y', 0)
+                    if abs(dx) > abs(dy):
+                        direction = 'east' if dx > 0 else 'west'
+                    else:
+                        direction = 'north' if dy > 0 else 'south'
+
+                    # usage에서 지목 추출
+                    usage = building.get('usage', '')
+                    jimok = usage.split()[-1] if usage else ''
+
+                    # 도로(지목='도')는 제외, 건물만 포함
+                    if jimok == '도':
+                        continue
+
+                    buildings.append({
+                        'pnu': feature_pnu,
+                        'geometry': polygon_coords,
+                        'center': {'lng': bldg_center_lng, 'lat': bldg_center_lat},
+                        'height': building.get('height', 0),
+                        'floors': building.get('floors', 0),
+                        'width': building.get('width', 0),
+                        'depth': building.get('depth', 0),
+                        'name': '',
+                        'main_purpose': '',
+                        'direction': direction,
+                        'jimok': jimok,
+                    })
+
+        except Exception:
+            pass  # Lambda 실패 시 VWorld 직접 호출 시도
+
+        # 2차: VWorld 건축물정보 레이어 직접 조회 (Lambda 보완/대체)
+        if self.api_key:
+            try:
+                # VWorld WFS로 건축물정보 조회
+                bbox_str = f"{bbox['minX']},{bbox['minY']},{bbox['maxX']},{bbox['maxY']}"
+                params = {
+                    'service': 'WFS',
+                    'version': '2.0.0',
+                    'request': 'GetFeature',
+                    'typeName': 'lt_c_bldginfo',  # 건축물정보 레이어
+                    'bbox': bbox_str + ',EPSG:4326',
+                    'srsName': 'EPSG:4326',
+                    'output': 'application/json',
+                    'key': self.api_key,
+                    'domain': settings.VWORLD_DOMAIN,
+                }
+
+                response = requests.get(
+                    f'{self.BASE_URL}/wfs',
+                    params=params,
+                    timeout=15
+                )
+
+                if response.status_code == 200:
+                    try:
+                        wfs_data = response.json()
+                        features = wfs_data.get('features', [])
+
+                        center_lng = (bbox['minX'] + bbox['maxX']) / 2
+                        center_lat = (bbox['minY'] + bbox['maxY']) / 2
+
+                        for feature in features:
+                            props = feature.get('properties', {})
+                            geom = feature.get('geometry', {})
+
+                            # PNU 추출
+                            bldg_pnu = props.get('pnu', '')
+                            if target_pnu and bldg_pnu == target_pnu:
+                                continue
+
+                            # 폴리곤 좌표 추출
+                            coords = geom.get('coordinates', [[]])
+                            geom_type = geom.get('type', '')
+
+                            if geom_type == 'MultiPolygon':
+                                polygon_coords = coords[0][0] if coords and coords[0] else []
+                            elif geom_type == 'Polygon':
+                                polygon_coords = coords[0] if coords else []
+                            else:
+                                continue
+
+                            if not polygon_coords or len(polygon_coords) < 3:
+                                continue
+
+                            # 중심점 계산
+                            lngs = [c[0] for c in polygon_coords]
+                            lats = [c[1] for c in polygon_coords]
+                            bldg_center_lng = sum(lngs) / len(lngs)
+                            bldg_center_lat = sum(lats) / len(lats)
+
+                            # ===== 겹침 필터링 (대상 필지와 겹치는 건물 제외) =====
+                            if target_polygon and len(target_polygon) >= 3:
+                                if point_in_polygon(bldg_center_lng, bldg_center_lat, target_polygon):
+                                    continue
+                                if polygon_intersects(polygon_coords, target_polygon):
+                                    continue
+                                dist = calculate_min_distance_to_polygon(
+                                    (bldg_center_lng, bldg_center_lat), target_polygon
+                                )
+                                if dist < 2.0:
+                                    continue
+                            # ===== 겹침 필터링 끝 =====
+
+                            # 방향 결정
+                            dx = bldg_center_lng - center_lng
+                            dy = bldg_center_lat - center_lat
+                            if abs(dx) > abs(dy):
+                                direction = 'east' if dx > 0 else 'west'
+                            else:
+                                direction = 'north' if dy > 0 else 'south'
+
+                            # 속성 추출
+                            floors = int(props.get('grndFlrCnt', 0) or 0)
+                            ugrnd_floors = int(props.get('ugrndFlrCnt', 0) or 0)
+                            height = float(props.get('buldHeit', 0) or 0)
+
+                            # 높이 추정 (층수 × 3m)
+                            if not height and floors:
+                                height = floors * 3.0
+
+                            buildings.append({
+                                'pnu': bldg_pnu,
+                                'geometry': polygon_coords,
+                                'center': {'lng': bldg_center_lng, 'lat': bldg_center_lat},
+                                'height': height,
+                                'floors': floors,
+                                'underground_floors': ugrnd_floors,
+                                'name': props.get('buldNm', ''),
+                                'main_purpose': props.get('mainPurpsCdNm', ''),
+                                'direction': direction,
+                                'bd_mgt_sn': props.get('bdMgtSn', ''),  # 건물관리번호
+                            })
+
+                    except (ValueError, KeyError):
+                        pass  # JSON 파싱 실패
+
+            except Exception:
+                pass  # VWorld 직접 호출 실패
+
+        # 중복 제거 (PNU 기준)
+        seen_pnus = set()
+        unique_buildings = []
+        for bldg in buildings:
+            pnu = bldg.get('pnu', '')
+            if pnu and pnu in seen_pnus:
+                continue
+            seen_pnus.add(pnu)
+            unique_buildings.append(bldg)
+
+        # 건축물대장 API로 층수/높이/건물명 보완 (DataGoKrService)
+        datago = DataGoKrService()
+        registry_query_count = 0
+        max_registry_queries = 10  # 최대 10개 건물만 조회 (속도 제한)
+
+        for bldg in unique_buildings:
+            bldg_pnu = bldg.get('pnu', '')
+            if not bldg_pnu or len(bldg_pnu) < 19:
+                continue
+
+            # 층수/높이가 없거나, 건물명이 없는 경우 보완 (최대 쿼리 수 제한)
+            needs_supplement = (
+                bldg.get('height', 0) <= 0 or
+                bldg.get('floors', 0) <= 0 or
+                not bldg.get('name')  # 건물명이 없으면 조회
+            )
+            if needs_supplement and registry_query_count < max_registry_queries:
+                try:
+                    registry_info = datago.get_building_info(bldg_pnu)
+                    if registry_info.get('success') and registry_info.get('buildings'):
+                        reg_bldg = registry_info['buildings'][0]  # 첫 번째 건물 정보
+
+                        # 높이 보완
+                        if bldg.get('height', 0) <= 0 and reg_bldg.get('height', 0) > 0:
+                            bldg['height'] = reg_bldg['height']
+
+                        # 층수 보완
+                        if bldg.get('floors', 0) <= 0:
+                            floors_info = reg_bldg.get('floors', {})
+                            above = floors_info.get('above', 0) if isinstance(floors_info, dict) else 0
+                            if above > 0:
+                                bldg['floors'] = above
+                                bldg['underground_floors'] = floors_info.get('below', 0)
+
+                        # 건물명/주용도 보완
+                        if not bldg.get('name') and reg_bldg.get('name'):
+                            bldg['name'] = reg_bldg['name']
+                        if not bldg.get('main_purpose') and reg_bldg.get('main_purpose'):
+                            bldg['main_purpose'] = reg_bldg['main_purpose']
+
+                        # 높이 추정 (건축물대장에서도 높이 없으면 층수×3m)
+                        if bldg.get('height', 0) <= 0 and bldg.get('floors', 0) > 0:
+                            bldg['height'] = bldg['floors'] * 3.0
+
+                    registry_query_count += 1
+
+                except Exception:
+                    registry_query_count += 1  # 실패해도 카운트
+
+        # 건축물대장 데이터 여부 플래그 추가
+        for bldg in unique_buildings:
+            # 건축물대장 데이터가 있는 경우: bd_mgt_sn, main_purpose, name 중 하나라도 있으면
+            has_registry = bool(
+                bldg.get('bd_mgt_sn') or
+                bldg.get('main_purpose') or
+                bldg.get('name')
+            )
+            bldg['has_registry'] = has_registry
+
+        result = {
+            'success': True,
+            'buildings': unique_buildings,
+        }
+
+        cache.set(cache_key, result, 3600)  # 1시간 캐시
+        return result
 
     def search_address(self, query: str) -> dict:
         """주소 검색 (Lambda 프록시 우선 사용)"""

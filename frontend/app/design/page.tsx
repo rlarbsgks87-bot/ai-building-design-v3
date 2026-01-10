@@ -85,9 +85,16 @@ interface AdjacentParcel {
   pnu: string
   geometry: [number, number][]  // [lng, lat][] 폴리곤 좌표
   jimok: string                 // 지목 (대, 전, 답 등)
-  jibun: string                 // 지번 (예: "50-11대")
+  jibun?: string                // 지번 (예: "50-11대")
   direction: 'north' | 'south' | 'east' | 'west' | 'unknown'
   center: { lng: number; lat: number }
+  height?: number               // 건물 높이 (미터)
+  floors?: number               // 지상 층수
+  underground_floors?: number   // 지하 층수
+  width?: number                // 건물 폭 (미터)
+  depth?: number                // 건물 깊이 (미터)
+  name?: string                 // 건물명
+  main_purpose?: string         // 주용도 (예: "제1종근린생활시설")
 }
 
 interface KakaoRoad {
@@ -179,21 +186,22 @@ function DesignPageContent() {
             console.warn('Failed to fetch parcel geometry, using square approximation:', geomError)
           }
 
-          // 인접 도로 및 주변 필지 데이터 가져오기
+          // 인접 도로 및 주변 건물 데이터 가져오기 (병렬 호출)
           let adjacentRoads: AdjacentRoad[] | undefined
           let adjacentParcels: AdjacentParcel[] | undefined
           let kakaoRoads: KakaoRoad[] | undefined
           let roadWidth: { min: number; max: number; average: number; source: string } | undefined
           try {
-            const roadsResponse = await landApi.getAdjacentRoads(pnu)
+            // 도로 정보와 건물 정보를 병렬로 가져오기
+            const [roadsResponse, buildingsResponse] = await Promise.all([
+              landApi.getAdjacentRoads(pnu),
+              landApi.getBuildingFootprints(pnu).catch(() => null),  // 건물 API 실패해도 진행
+            ])
+
             if (roadsResponse.success) {
               if (roadsResponse.roads && roadsResponse.roads.length > 0) {
                 adjacentRoads = roadsResponse.roads
                 console.log('VWorld roads loaded:', adjacentRoads.length, 'roads')
-              }
-              if (roadsResponse.adjacent_parcels && roadsResponse.adjacent_parcels.length > 0) {
-                adjacentParcels = roadsResponse.adjacent_parcels as AdjacentParcel[]
-                console.log('Adjacent parcels loaded:', adjacentParcels.length, 'parcels')
               }
               if (roadsResponse.kakao_roads && roadsResponse.kakao_roads.length > 0) {
                 kakaoRoads = roadsResponse.kakao_roads
@@ -203,6 +211,23 @@ function DesignPageContent() {
                 roadWidth = roadsResponse.road_width
                 console.log('Road width loaded:', roadWidth.source, '-', roadWidth.average, 'm')
               }
+            }
+
+            // 건물 footprints API 결과 우선 사용
+            if (buildingsResponse?.success && buildingsResponse.buildings?.length > 0) {
+              adjacentParcels = buildingsResponse.buildings.map(b => ({
+                ...b,
+                jimok: b.jimok || '',
+              })) as AdjacentParcel[]
+              const withRegistry = adjacentParcels.filter(p => p.has_registry)
+              console.log('Building footprints loaded:', adjacentParcels.length, 'buildings,', withRegistry.length, 'with registry')
+              if (withRegistry.length > 0) {
+                console.log('Registry buildings sample:', withRegistry.slice(0, 3).map(p => ({ pnu: p.pnu, floors: p.floors, height: p.height, has_registry: p.has_registry })))
+              }
+            } else if (roadsResponse.adjacent_parcels && roadsResponse.adjacent_parcels.length > 0) {
+              // 건물 API 실패 시 기존 adjacent_parcels 사용 (fallback)
+              adjacentParcels = roadsResponse.adjacent_parcels as AdjacentParcel[]
+              console.log('Adjacent parcels fallback:', adjacentParcels.length, 'parcels')
             }
           } catch (roadsError) {
             console.warn('Failed to fetch adjacent roads:', roadsError)

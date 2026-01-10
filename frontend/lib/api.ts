@@ -214,7 +214,7 @@ export interface AdjacentParcel {
   pnu: string
   geometry: [number, number][]  // [lng, lat][] 폴리곤 좌표
   jimok: string                 // 지목 (대, 전, 답 등)
-  jibun: string                 // 지번 (예: "50-11대")
+  jibun?: string                // 지번 (예: "50-11대")
   direction: 'north' | 'south' | 'east' | 'west' | 'unknown'
   center: {
     lng: number
@@ -224,6 +224,10 @@ export interface AdjacentParcel {
   floors?: number               // 층수
   width?: number                // 건물/필지 폭 (미터)
   depth?: number                // 건물/필지 깊이 (미터)
+  name?: string                 // 건물명
+  main_purpose?: string         // 주용도
+  bd_mgt_sn?: string            // 건물관리번호
+  has_registry?: boolean        // 건축물대장 데이터 여부
 }
 
 export interface KakaoRoad {
@@ -253,6 +257,31 @@ export interface AdjacentRoadsResponse {
   road_width?: RoadWidth  // 도로 폭 정보 (use_zones에서 추출)
 }
 
+export interface BuildingFootprint {
+  pnu: string
+  geometry: [number, number][]  // [lng, lat][] 폴리곤 좌표
+  center: {
+    lng: number
+    lat: number
+  }
+  height: number              // 미터
+  floors: number              // 지상 층수
+  underground_floors?: number // 지하 층수
+  width?: number              // 미터
+  depth?: number              // 미터
+  name?: string               // 건물명
+  main_purpose?: string       // 주용도 (예: "제1종근린생활시설")
+  direction: 'north' | 'south' | 'east' | 'west' | 'unknown'
+  jimok?: string              // 지목 (예: "대")
+  bd_mgt_sn?: string          // 건물관리번호
+  has_registry?: boolean      // 건축물대장 데이터 여부
+}
+
+export interface BuildingFootprintsResponse {
+  success: boolean
+  buildings: BuildingFootprint[]
+}
+
 export const landApi = {
   search: async (query: string): Promise<{ success: boolean; data: SearchResult[] }> => {
     const response = await api.get(`/land/search/?q=${encodeURIComponent(query)}`)
@@ -280,6 +309,10 @@ export const landApi = {
   },
   getAdjacentRoads: async (pnu: string): Promise<AdjacentRoadsResponse> => {
     const response = await api.get(`/land/${pnu}/roads/`)
+    return response.data
+  },
+  getBuildingFootprints: async (pnu: string): Promise<BuildingFootprintsResponse> => {
+    const response = await api.get(`/land/${pnu}/buildings/`)
     return response.data
   },
   getByPoint: async (x: number, y: number) => {
