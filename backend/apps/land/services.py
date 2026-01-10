@@ -967,6 +967,8 @@ class VWorldService:
                         'center': {'lng': center_lng, 'lat': center_lat},
                         'height': building.get('height', 0),
                         'floors': building.get('floors', 0),
+                        'width': building.get('width', 0),  # 건물/필지 폭 (미터)
+                        'depth': building.get('depth', 0),  # 건물/필지 깊이 (미터)
                     }
 
                     # 지목이 '도'(도로)인 경우 roads에, 아니면 adjacent_parcels에

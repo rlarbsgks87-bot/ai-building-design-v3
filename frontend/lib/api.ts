@@ -222,6 +222,8 @@ export interface AdjacentParcel {
   }
   height?: number               // 건물 높이 (미터)
   floors?: number               // 층수
+  width?: number                // 건물/필지 폭 (미터)
+  depth?: number                // 건물/필지 깊이 (미터)
 }
 
 export interface KakaoRoad {

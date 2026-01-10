@@ -85,6 +85,8 @@ interface AdjacentParcel {
   center: { lng: number; lat: number }
   height?: number               // 건물 높이 (미터)
   floors?: number               // 층수
+  width?: number                // 건물/필지 폭 (미터)
+  depth?: number                // 건물/필지 깊이 (미터)
 }
 
 interface MassViewer3DProps {
@@ -775,6 +777,9 @@ function AdjacentParcelPolygon({
 
   // 건물 높이가 있으면 3D 박스 렌더링
   const buildingHeight = parcel.height || 0
+  // 건물 크기 (API에서 제공하거나 기본값 8m)
+  const buildingWidth = parcel.width || 8
+  const buildingDepth = parcel.depth || 8
 
   return (
     <group>
@@ -799,7 +804,7 @@ function AdjacentParcelPolygon({
       {/* 주변 건물 3D 박스 (높이가 있을 때만) */}
       {buildingHeight > 0 && (
         <mesh position={[labelPosition[0], buildingHeight / 2, labelPosition[2]]} castShadow receiveShadow>
-          <boxGeometry args={[8, buildingHeight, 8]} />
+          <boxGeometry args={[buildingWidth, buildingHeight, buildingDepth]} />
           <meshStandardMaterial
             color="#9ca3af"  // 회색 건물
             transparent
@@ -808,8 +813,8 @@ function AdjacentParcelPolygon({
         </mesh>
       )}
 
-      {/* 지목/층수 라벨 */}
-      {(jimokLabel || parcel.floors) && (
+      {/* 지번/층수 라벨 */}
+      {(parcel.jibun || parcel.floors) && (
         <Text
           position={[labelPosition[0], buildingHeight + 0.5, labelPosition[2]]}
           fontSize={0.8}
@@ -819,7 +824,7 @@ function AdjacentParcelPolygon({
           outlineWidth={0.03}
           outlineColor="#000000"
         >
-          {parcel.floors ? `${parcel.floors}F` : jimokLabel}
+          {parcel.floors ? `${parcel.jibun} ${parcel.floors}F` : parcel.jibun}
         </Text>
       )}
     </group>
@@ -1042,17 +1047,17 @@ function LandBoundary({
             // 도로를 X축(동서) 방향으로 놓고 Y축 회전
             roadRotation = apiRoadAngle * (Math.PI / 180)
 
-            // 방향에 따른 위치 설정
+            // 방향에 따른 위치 설정 (도로 중심 = 대지 경계 + 도로 폭의 절반)
             if (isNorthSouth) {
-              roadCenterZ = isNorth ? depth / 2 + 4 : -depth / 2 - 4
+              roadCenterZ = isNorth ? depth / 2 + halfRoadWidth : -depth / 2 - halfRoadWidth
               roadLength = width + 10
             } else {
-              roadCenterX = isEast ? width / 2 + 4 : -width / 2 - 4
+              roadCenterX = isEast ? width / 2 + halfRoadWidth : -width / 2 - halfRoadWidth
               roadLength = depth + 10
             }
           } else if (isNorthSouth) {
             // Fallback: 필지 폴리곤에서 도로 접합 변의 각도 계산
-            roadCenterZ = isNorth ? depth / 2 + 4 : -depth / 2 - 4
+            roadCenterZ = isNorth ? depth / 2 + halfRoadWidth : -depth / 2 - halfRoadWidth
             roadLength = width + 10
 
             if (localPolygon && localPolygon.points.length >= 3) {
@@ -1072,11 +1077,11 @@ function LandBoundary({
 
               roadRotation = -targetEdge.angle
               roadCenterX = targetEdge.midX
-              roadCenterZ = targetEdge.midZ + (isNorth ? 4 : -4)
+              roadCenterZ = targetEdge.midZ + (isNorth ? halfRoadWidth : -halfRoadWidth)
             }
           } else {
             // 동/서 방향 도로 (세로 방향 도로)
-            roadCenterX = isEast ? width / 2 + 4 : -width / 2 - 4
+            roadCenterX = isEast ? width / 2 + halfRoadWidth : -width / 2 - halfRoadWidth
             roadLength = depth + 10
             roadRotation = Math.PI / 2 // 90도 회전
 
@@ -1096,7 +1101,7 @@ function LandBoundary({
                 : edges.reduce((min, e) => e.midX < min.midX ? e : min, edges[0])
 
               roadRotation = -targetEdge.angle + Math.PI / 2
-              roadCenterX = targetEdge.midX + (isEast ? 4 : -4)
+              roadCenterX = targetEdge.midX + (isEast ? halfRoadWidth : -halfRoadWidth)
               roadCenterZ = targetEdge.midZ
             }
           }
