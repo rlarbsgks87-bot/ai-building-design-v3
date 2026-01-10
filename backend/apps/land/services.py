@@ -856,7 +856,7 @@ class VWorldService:
         """
         import math
 
-        cache_key = f"adjacent_roads_v7:{pnu}"  # v7: 동서/남북 조합 도로 방향 처리
+        cache_key = f"adjacent_roads_v8:{pnu}"  # v8: 8방향 검색으로 대각선 도로 감지
         cached = cache.get(cache_key)
         if cached:
             return cached
@@ -1010,41 +1010,50 @@ class VWorldService:
                     road_name = center_result['road_name']
                     road_address = center_result.get('road_address', '')
 
-                    # 방향 결정: 각 경계에서 도로를 검색하여 같은 도로명이 있는 방향 찾기
+                    # 방향 결정: 8방향 검색으로 도로 위치 정확히 파악
                     import math
-                    lat_offset = 5 / 111320  # 5m
-                    lng_offset = 5 / (111320 * math.cos(math.radians(parcel_center['lat'])))
+                    offset_m = 8  # 8m 거리
+                    lat_offset = offset_m / 111320
+                    lng_offset = offset_m / (111320 * math.cos(math.radians(parcel_center['lat'])))
 
                     found_directions = []
                     if bbox:
-                        # 각 방향 5m 바깥에서 검색 (북쪽 우선)
+                        # 8방향 검색 (4방향 + 대각선)
                         direction_checks = [
-                            ('north', (parcel_center['lng'], bbox['maxY'] + lat_offset)),
-                            ('east', (bbox['maxX'] + lng_offset, parcel_center['lat'])),
-                            ('south', (parcel_center['lng'], bbox['minY'] - lat_offset)),
-                            ('west', (bbox['minX'] - lng_offset, parcel_center['lat'])),
+                            ('N', (parcel_center['lng'], bbox['maxY'] + lat_offset)),
+                            ('NE', (bbox['maxX'] + lng_offset * 0.7, bbox['maxY'] + lat_offset * 0.7)),
+                            ('E', (bbox['maxX'] + lng_offset, parcel_center['lat'])),
+                            ('SE', (bbox['maxX'] + lng_offset * 0.7, bbox['minY'] - lat_offset * 0.7)),
+                            ('S', (parcel_center['lng'], bbox['minY'] - lat_offset)),
+                            ('SW', (bbox['minX'] - lng_offset * 0.7, bbox['minY'] - lat_offset * 0.7)),
+                            ('W', (bbox['minX'] - lng_offset, parcel_center['lat'])),
+                            ('NW', (bbox['minX'] - lng_offset * 0.7, bbox['maxY'] + lat_offset * 0.7)),
                         ]
                         for dir_name, (check_lng, check_lat) in direction_checks:
                             check_result = kakao.get_road_name_by_coord(check_lng, check_lat)
                             if check_result.get('road_name') == road_name:
                                 found_directions.append(dir_name)
 
-                    # 도로 방향 결정 로직:
-                    # 1. 발견된 방향이 있으면 첫 번째 사용 (북쪽 우선 순서)
-                    # 2. 동서+남북 조합이면 코너를 의미 (예: east+west = 남북으로 지나가는 도로)
-                    if found_directions:
-                        # east+west 조합 = 도로가 남북으로 지나감 → 동쪽 또는 서쪽 중 하나 선택
-                        if 'east' in found_directions and 'west' in found_directions:
-                            # 남북으로 지나가는 도로 → 동쪽 접합으로 표시
-                            direction = 'east'
-                        elif 'north' in found_directions and 'south' in found_directions:
-                            # 동서로 지나가는 도로 → 북쪽 접합으로 표시 (일조권 고려)
-                            direction = 'north'
-                        else:
-                            direction = found_directions[0]
-                    else:
-                        # 같은 도로명을 찾지 못한 경우 북쪽 가정
-                        direction = 'north'
+                    # 8방향을 4방향으로 매핑하여 도로 방향 결정
+                    # 대각선 방향은 주 방향으로 매핑 (NE→north, SE→south 등)
+                    direction_mapping = {
+                        'N': 'north', 'NE': 'north', 'NW': 'north',
+                        'S': 'south', 'SE': 'south', 'SW': 'south',
+                        'E': 'east', 'W': 'west',
+                    }
+
+                    # 발견된 방향들을 4방향으로 변환하고 우선순위 적용
+                    # 우선순위: north > south > east > west (일조권 때문에 북쪽 우선)
+                    priority_order = ['north', 'south', 'east', 'west']
+                    mapped_directions = set()
+                    for d in found_directions:
+                        mapped_directions.add(direction_mapping.get(d, d))
+
+                    direction = 'north'  # 기본값
+                    for priority_dir in priority_order:
+                        if priority_dir in mapped_directions:
+                            direction = priority_dir
+                            break
 
                     kakao_roads.append({
                         'direction': direction,
