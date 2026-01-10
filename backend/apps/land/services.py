@@ -858,7 +858,7 @@ class VWorldService:
         import logging
         logger = logging.getLogger(__name__)
 
-        cache_key = f"adjacent_roads_v15:{pnu}"  # v15: Referer 헤더 추가
+        cache_key = f"adjacent_roads_v16:{pnu}"  # v16: Lambda 프록시 사용
         cached = cache.get(cache_key)
         if cached:
             return cached
@@ -908,114 +908,83 @@ class VWorldService:
         adjacent_parcels = []  # 주변 필지 (도로 제외)
         vworld_debug = {}  # 디버그 정보
 
-        if self.api_key:
-            try:
-                # VWorld WFS로 bbox 내 지적도 조회
-                bbox_str = f"{expanded_bbox['minX']},{expanded_bbox['minY']},{expanded_bbox['maxX']},{expanded_bbox['maxY']}"
+        # Lambda 프록시의 nearby 엔드포인트 사용 (Render 서버 IP 차단 우회)
+        try:
+            # Lambda nearby API 호출 (반경 100m 내 필지/건물 조회)
+            nearby_url = f"{self.lambda_proxy.base_url}?type=nearby&pnu={pnu}&x={parcel_center['lng']}&y={parcel_center['lat']}&radius=100"
+            response = requests.get(nearby_url, timeout=20)
+            data = response.json()
 
-                params = {
-                    'service': 'data',
-                    'request': 'GetFeature',
-                    'data': 'LP_PA_CBND_BUBUN',  # 연속지적도
-                    'key': self.api_key,
-                    'domain': settings.VWORLD_DOMAIN,
-                    'geomFilter': f'BOX({bbox_str})',
-                    'format': 'json',
-                    'errorformat': 'json',
-                    'crs': 'EPSG:4326',
-                    'geometry': 'true',
-                    'attribute': 'true',
-                    'size': 100,  # 최대 100개 필지
-                }
+            vworld_debug['nearby_status'] = response.status_code
 
-                # Referer 헤더 추가 (VWorld 도메인 검증 우회)
-                headers = {
-                    'Referer': 'http://localhost',  # VWorld는 Referer 체크
-                }
-                response = requests.get(self.DATA_URL, params=params, headers=headers, timeout=15)
-                data = response.json()
+            if 'buildings' in data:
+                buildings = data.get('buildings', [])
+                vworld_debug['building_count'] = len(buildings)
+                logger.info(f"Lambda nearby found {len(buildings)} buildings/parcels")
 
-                # 디버깅: VWorld 응답 로그
-                vworld_status = data.get('response', {}).get('status')
-                vworld_debug['status'] = vworld_status
-                vworld_debug['bbox_str'] = bbox_str
-                logger.info(f"VWorld WFS response status: {vworld_status}")
-                logger.info(f"VWorld WFS bbox: {bbox_str}")
-                if vworld_status != 'OK':
-                    vworld_error = data.get('response', {}).get('error', {})
-                    vworld_debug['error'] = vworld_error
-                    logger.warning(f"VWorld WFS error: {vworld_error}")
+                # 미터→WGS84 변환 계수
+                lat_rad = math.radians(parcel_center['lat'])
+                meters_per_lat = 111320
+                meters_per_lng = 111320 * math.cos(lat_rad)
 
-                if data.get('response', {}).get('status') == 'OK':
-                    features = data['response'].get('result', {}).get('featureCollection', {}).get('features', [])
-                    logger.info(f"VWorld WFS found {len(features)} features")
+                for building in buildings:
+                    feature_pnu = building.get('pnu', '')
 
-                    for feature in features:
-                        props = feature.get('properties', {})
-                        geometry = feature.get('geometry', {})
-                        feature_pnu = props.get('pnu', '')
+                    # 본인 필지 제외
+                    if feature_pnu == pnu:
+                        continue
 
-                        # 본인 필지 제외
-                        if feature_pnu == pnu:
-                            continue
+                    # usage에서 지목 추출 (예: "797-4 대" → "대")
+                    usage = building.get('usage', '')
+                    jibun = usage.split()[0] if usage else ''  # "797-4"
+                    jimok = usage.split()[-1] if usage else ''  # "대"
 
-                        # 지번에서 지목 추출 (예: "290-34도" → "도")
-                        jibun = props.get('jibun', '')
-                        jimok = ''
-                        if jibun:
-                            for char in reversed(jibun):
-                                if not char.isdigit() and char != '-' and char != ' ':
-                                    jimok = char
-                                    break
+                    # 폴리곤 좌표를 WGS84로 변환 (미터 상대좌표 → 위경도)
+                    polygon_rel = building.get('polygon', [])
+                    polygon_coords = []
+                    for point in polygon_rel:
+                        # 상대 좌표(미터)를 절대 좌표(WGS84)로 변환
+                        lng = parcel_center['lng'] + point['x'] / meters_per_lng
+                        lat = parcel_center['lat'] + point['y'] / meters_per_lat
+                        polygon_coords.append([lng, lat])
 
-                        # 폴리곤 좌표 추출
-                        coords = geometry.get('coordinates', [[]])
-                        geom_type = geometry.get('type', '')
+                    if not polygon_coords:
+                        continue
 
-                        if geom_type == 'MultiPolygon':
-                            polygon_coords = coords[0][0] if coords and coords[0] else []
-                        elif geom_type == 'Polygon':
-                            polygon_coords = coords[0] if coords else []
-                        else:
-                            polygon_coords = coords
+                    # 중심점 계산 (WGS84)
+                    center_lng = parcel_center['lng'] + building.get('x', 0) / meters_per_lng
+                    center_lat = parcel_center['lat'] + building.get('y', 0) / meters_per_lat
 
-                        if not polygon_coords:
-                            continue
+                    # 필지 중심과의 상대 위치로 방향 결정
+                    dx = building.get('x', 0)
+                    dy = building.get('y', 0)
 
-                        # 중심점 계산
-                        center_lngs = [c[0] for c in polygon_coords]
-                        center_lats = [c[1] for c in polygon_coords]
-                        center_lng = sum(center_lngs) / len(center_lngs)
-                        center_lat = sum(center_lats) / len(center_lats)
+                    # 방향 결정 (북/남/동/서)
+                    if abs(dx) > abs(dy):
+                        direction = 'east' if dx > 0 else 'west'
+                    else:
+                        direction = 'north' if dy > 0 else 'south'
 
-                        # 필지 중심과의 상대 위치로 방향 결정
-                        dx = center_lng - parcel_center['lng']
-                        dy = center_lat - parcel_center['lat']
+                    parcel_data = {
+                        'pnu': feature_pnu,
+                        'geometry': polygon_coords,
+                        'jimok': jimok,
+                        'jibun': jibun,
+                        'direction': direction,
+                        'center': {'lng': center_lng, 'lat': center_lat},
+                        'height': building.get('height', 0),
+                        'floors': building.get('floors', 0),
+                    }
 
-                        # 방향 결정 (북/남/동/서)
-                        if abs(dx) > abs(dy):
-                            direction = 'east' if dx > 0 else 'west'
-                        else:
-                            direction = 'north' if dy > 0 else 'south'
+                    # 지목이 '도'(도로)인 경우 roads에, 아니면 adjacent_parcels에
+                    if jimok == '도':
+                        roads.append(parcel_data)
+                    else:
+                        adjacent_parcels.append(parcel_data)
 
-                        parcel_data = {
-                            'pnu': feature_pnu,
-                            'geometry': polygon_coords,
-                            'jimok': jimok,
-                            'jibun': jibun,
-                            'direction': direction,
-                            'center': {'lng': center_lng, 'lat': center_lat},
-                        }
-
-                        # 지목이 '도'(도로)인 경우 roads에, 아니면 adjacent_parcels에
-                        if jimok == '도':
-                            roads.append(parcel_data)
-                        else:
-                            adjacent_parcels.append(parcel_data)
-
-            except Exception as e:
-                vworld_debug['exception'] = str(e)
-                logger.error(f"VWorld WFS exception: {str(e)}")
+        except Exception as e:
+            vworld_debug['exception'] = str(e)
+            logger.error(f"Lambda nearby exception: {str(e)}")
 
         # VWorld에서 도로를 찾지 못한 경우 Kakao API로 도로명 조회 (fallback)
         kakao_roads = []
