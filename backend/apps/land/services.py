@@ -855,10 +855,8 @@ class VWorldService:
             }
         """
         import math
-        import logging
-        logger = logging.getLogger(__name__)
 
-        cache_key = f"adjacent_roads_v16:{pnu}"  # v16: Lambda 프록시 사용
+        cache_key = f"adjacent_roads_v17:{pnu}"  # v17: Lambda nearby 사용
         cached = cache.get(cache_key)
         if cached:
             return cached
@@ -906,7 +904,6 @@ class VWorldService:
 
         roads = []
         adjacent_parcels = []  # 주변 필지 (도로 제외)
-        vworld_debug = {}  # 디버그 정보
 
         # Lambda 프록시의 nearby 엔드포인트 사용 (Render 서버 IP 차단 우회)
         try:
@@ -915,12 +912,8 @@ class VWorldService:
             response = requests.get(nearby_url, timeout=20)
             data = response.json()
 
-            vworld_debug['nearby_status'] = response.status_code
-
             if 'buildings' in data:
                 buildings = data.get('buildings', [])
-                vworld_debug['building_count'] = len(buildings)
-                logger.info(f"Lambda nearby found {len(buildings)} buildings/parcels")
 
                 # 미터→WGS84 변환 계수
                 lat_rad = math.radians(parcel_center['lat'])
@@ -982,9 +975,8 @@ class VWorldService:
                     else:
                         adjacent_parcels.append(parcel_data)
 
-        except Exception as e:
-            vworld_debug['exception'] = str(e)
-            logger.error(f"Lambda nearby exception: {str(e)}")
+        except Exception:
+            pass  # Lambda nearby 실패 시 빈 결과 반환
 
         # VWorld에서 도로를 찾지 못한 경우 Kakao API로 도로명 조회 (fallback)
         kakao_roads = []
@@ -1133,11 +1125,6 @@ class VWorldService:
             'kakao_roads': kakao_roads,  # Kakao API에서 조회한 도로명 정보
             'parcel_center': parcel_center,
             'road_width': road_width,  # 도로 폭 정보 (use_zones에서 추출)
-            'debug': {
-                'has_api_key': bool(self.api_key),
-                'bbox': expanded_bbox if bbox else None,
-                'vworld': vworld_debug,
-            }
         }
         cache.set(cache_key, result, 604800)  # 7일
         return result
