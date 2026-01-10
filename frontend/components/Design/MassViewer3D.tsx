@@ -83,6 +83,7 @@ interface MassViewer3DProps {
   landPolygon?: [number, number][]  // [lng, lat][] 지적도 폴리곤 좌표
   adjacentRoads?: AdjacentRoad[]  // 인접 도로 데이터 (지적도 기반)
   kakaoRoads?: KakaoRoad[]  // 도로명 정보 (Kakao API fallback)
+  roadWidth?: { min: number; max: number; average: number; source: string }  // 도로 폭 정보
   useZone?: string  // 용도지역 (주거지역인 경우 일조권 적용)
   showNorthSetback?: boolean  // 북쪽 일조권 표시 여부
   floorSetbacks?: number[]  // 층별 북측 이격거리 (계단형 매스용)
@@ -695,6 +696,7 @@ function LandBoundary({
   landPolygon,
   adjacentRoads,
   kakaoRoads,
+  roadWidth,
   setbacks,
   actualBackSetback,
 }: {
@@ -702,6 +704,7 @@ function LandBoundary({
   landPolygon?: [number, number][]  // [lng, lat][] 지적도 폴리곤 좌표
   adjacentRoads?: AdjacentRoad[]  // 인접 도로 데이터
   kakaoRoads?: KakaoRoad[]  // 도로명 정보 (Kakao fallback)
+  roadWidth?: { min: number; max: number; average: number; source: string }  // 도로 폭 정보
   setbacks: BuildingConfig['setbacks']
   actualBackSetback?: number  // 실제 1층 북측 이격거리 (floorSetbacks[0])
 }) {
@@ -873,6 +876,10 @@ function LandBoundary({
           const isNorth = roadDirection === 'north'
           const isEast = roadDirection === 'east'
 
+          // 도로 폭 (API에서 제공하거나 기본값 8m)
+          const actualRoadWidth = roadWidth?.average || 8
+          const halfRoadWidth = actualRoadWidth / 2
+
           // 도로 위치 및 회전 계산
           let roadRotation = 0 // Y축 회전 (라디안)
           let roadCenterX = 0
@@ -960,7 +967,7 @@ function LandBoundary({
             >
               {/* 도로 평면 */}
               <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.03, 0]} receiveShadow>
-                <planeGeometry args={[roadLength, 8]} />
+                <planeGeometry args={[roadLength, actualRoadWidth]} />
                 <meshStandardMaterial color="#4a5568" side={THREE.DoubleSide} />
               </mesh>
 
@@ -980,8 +987,8 @@ function LandBoundary({
               {/* 도로 경계선 (대지측) */}
               <Line
                 points={[
-                  [-roadLength / 2, 0.02, isNorth || isEast ? -4 : 4],
-                  [roadLength / 2, 0.02, isNorth || isEast ? -4 : 4],
+                  [-roadLength / 2, 0.02, isNorth || isEast ? -halfRoadWidth : halfRoadWidth],
+                  [roadLength / 2, 0.02, isNorth || isEast ? -halfRoadWidth : halfRoadWidth],
                 ]}
                 color="#9ca3af"
                 lineWidth={2}
@@ -1794,7 +1801,7 @@ function AutoRotate({ enabled = false }: { enabled?: boolean }) {
   return null
 }
 
-export function MassViewer3D({ building, landArea, landDimensions: propLandDimensions, landPolygon, adjacentRoads, kakaoRoads, useZone = '제2종일반주거지역', showNorthSetback = true, floorSetbacks, address }: MassViewer3DProps) {
+export function MassViewer3D({ building, landArea, landDimensions: propLandDimensions, landPolygon, adjacentRoads, kakaoRoads, roadWidth, useZone = '제2종일반주거지역', showNorthSetback = true, floorSetbacks, address }: MassViewer3DProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('perspective')
   const [showExportMenu, setShowExportMenu] = useState(false)
   const landDimensions = useMemo(() => calculateLandDimensions(landArea, propLandDimensions), [landArea, propLandDimensions])
@@ -1888,6 +1895,7 @@ export function MassViewer3D({ building, landArea, landDimensions: propLandDimen
           landPolygon={landPolygon}
           adjacentRoads={adjacentRoads}
           kakaoRoads={kakaoRoads}
+          roadWidth={roadWidth}
           setbacks={building.setbacks}
           actualBackSetback={floorSetbacks && floorSetbacks.length > 0 ? floorSetbacks[0] : undefined}
         />

@@ -856,7 +856,7 @@ class VWorldService:
         """
         import math
 
-        cache_key = f"adjacent_roads_v10:{pnu}"  # v10: 도로 각도 -90~90° 정규화
+        cache_key = f"adjacent_roads_v11:{pnu}"  # v11: 도로 폭 정보 추가
         cached = cache.get(cache_key)
         if cached:
             return cached
@@ -1101,11 +1101,44 @@ class VWorldService:
             except Exception:
                 pass
 
+        # 도로 폭 정보 추출 (use_zones에서 파싱)
+        road_width = None
+        try:
+            land_use = self.lambda_proxy.get_land_use(pnu)
+            if land_use.get('success'):
+                import re
+                for zone in land_use.get('zones', []):
+                    zone_name = zone.get('name', '')
+                    # "소로2류(폭 8m~10m)" 형태에서 폭 추출
+                    match = re.search(r'\(폭\s*(\d+)m[~\-](\d+)m\)', zone_name)
+                    if match:
+                        road_width = {
+                            'min': int(match.group(1)),
+                            'max': int(match.group(2)),
+                            'average': (int(match.group(1)) + int(match.group(2))) / 2,
+                            'source': zone_name,
+                        }
+                        break
+                    # "대로1류(폭 25m이상)" 형태
+                    match = re.search(r'\(폭\s*(\d+)m이상\)', zone_name)
+                    if match:
+                        width_val = int(match.group(1))
+                        road_width = {
+                            'min': width_val,
+                            'max': width_val + 10,  # 이상이므로 여유값
+                            'average': width_val + 5,
+                            'source': zone_name,
+                        }
+                        break
+        except Exception:
+            pass
+
         result = {
             'success': True,
             'roads': roads,
             'kakao_roads': kakao_roads,  # Kakao API에서 조회한 도로명 정보
             'parcel_center': parcel_center,
+            'road_width': road_width,  # 도로 폭 정보 (use_zones에서 추출)
         }
         cache.set(cache_key, result, 604800)  # 7일
         return result

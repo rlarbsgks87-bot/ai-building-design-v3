@@ -103,6 +103,7 @@ interface LandInfo {
   polygon?: [number, number][]  // [lng, lat][] 지적도 폴리곤 좌표
   adjacentRoads?: AdjacentRoad[]  // 인접 도로 데이터 (VWorld 지적도)
   kakaoRoads?: KakaoRoad[]  // 도로명 정보 (Kakao API fallback)
+  roadWidth?: { min: number; max: number; average: number; source: string }  // 도로 폭 정보
 }
 
 type TabType = 'config' | 'floors' | 'sunlight' | 'profit' | 'compare'
@@ -171,6 +172,7 @@ function DesignPageContent() {
           // 인접 도로 데이터 가져오기 (지적도 + 카카오 fallback)
           let adjacentRoads: AdjacentRoad[] | undefined
           let kakaoRoads: KakaoRoad[] | undefined
+          let roadWidth: { min: number; max: number; average: number; source: string } | undefined
           try {
             const roadsResponse = await landApi.getAdjacentRoads(pnu)
             if (roadsResponse.success) {
@@ -181,6 +183,10 @@ function DesignPageContent() {
               if (roadsResponse.kakao_roads && roadsResponse.kakao_roads.length > 0) {
                 kakaoRoads = roadsResponse.kakao_roads
                 console.log('Kakao roads loaded:', kakaoRoads.map(r => r.road_name).join(', '))
+              }
+              if (roadsResponse.road_width) {
+                roadWidth = roadsResponse.road_width
+                console.log('Road width loaded:', roadWidth.source, '-', roadWidth.average, 'm')
               }
             }
           } catch (roadsError) {
@@ -200,6 +206,7 @@ function DesignPageContent() {
             polygon: polygon,
             adjacentRoads: adjacentRoads,
             kakaoRoads: kakaoRoads,
+            roadWidth: roadWidth,
           })
         }
       } catch (error) {
@@ -662,6 +669,7 @@ function DesignPageContent() {
             landPolygon={landInfo.polygon}
             adjacentRoads={landInfo.adjacentRoads}
             kakaoRoads={landInfo.kakaoRoads}
+            roadWidth={landInfo.roadWidth}
             useZone={landInfo.useZone}
             showNorthSetback={true}
             floorSetbacks={currentFloorSetbacks}

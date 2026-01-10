@@ -218,6 +218,13 @@ export interface KakaoRoad {
   found_directions?: string[]  // 발견된 방향들 (디버깅용)
 }
 
+export interface RoadWidth {
+  min: number      // 최소 폭 (m)
+  max: number      // 최대 폭 (m)
+  average: number  // 평균 폭 (m)
+  source: string   // 출처 (예: "소로2류(폭 8m~10m)")
+}
+
 export interface AdjacentRoadsResponse {
   success: boolean
   roads: AdjacentRoad[]
@@ -226,6 +233,7 @@ export interface AdjacentRoadsResponse {
     lng: number
     lat: number
   }
+  road_width?: RoadWidth  // 도로 폭 정보 (use_zones에서 추출)
 }
 
 export const landApi = {
