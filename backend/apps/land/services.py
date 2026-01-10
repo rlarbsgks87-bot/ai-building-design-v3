@@ -855,8 +855,10 @@ class VWorldService:
             }
         """
         import math
+        import logging
+        logger = logging.getLogger(__name__)
 
-        cache_key = f"adjacent_roads_v12:{pnu}"  # v12: 주변 필지 정보 추가
+        cache_key = f"adjacent_roads_v13:{pnu}"  # v13: WFS 디버깅
         cached = cache.get(cache_key)
         if cached:
             return cached
@@ -928,8 +930,15 @@ class VWorldService:
                 response = requests.get(self.DATA_URL, params=params, timeout=15)
                 data = response.json()
 
+                # 디버깅: VWorld 응답 로그
+                logger.info(f"VWorld WFS response status: {data.get('response', {}).get('status')}")
+                logger.info(f"VWorld WFS bbox: {bbox_str}")
+                if data.get('response', {}).get('status') != 'OK':
+                    logger.warning(f"VWorld WFS error: {data.get('response', {}).get('error', {})}")
+
                 if data.get('response', {}).get('status') == 'OK':
                     features = data['response'].get('result', {}).get('featureCollection', {}).get('features', [])
+                    logger.info(f"VWorld WFS found {len(features)} features")
 
                     for feature in features:
                         props = feature.get('properties', {})
@@ -995,7 +1004,7 @@ class VWorldService:
                             adjacent_parcels.append(parcel_data)
 
             except Exception as e:
-                pass  # 실패 시 빈 배열 반환
+                logger.error(f"VWorld WFS exception: {str(e)}")
 
         # VWorld에서 도로를 찾지 못한 경우 Kakao API로 도로명 조회 (fallback)
         kakao_roads = []
