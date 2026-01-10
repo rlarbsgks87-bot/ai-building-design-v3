@@ -856,7 +856,7 @@ class VWorldService:
         """
         import math
 
-        cache_key = f"adjacent_roads_v8:{pnu}"  # v8: 8방향 검색으로 대각선 도로 감지
+        cache_key = f"adjacent_roads_v9:{pnu}"  # v9: 도로 각도 계산 추가
         cached = cache.get(cache_key)
         if cached:
             return cached
@@ -1017,6 +1017,7 @@ class VWorldService:
                     lng_offset = offset_m / (111320 * math.cos(math.radians(parcel_center['lat'])))
 
                     found_directions = []
+                    found_points = {}  # 좌표 저장 (각도 계산용)
                     if bbox:
                         # 8방향 검색 (4방향 + 대각선)
                         direction_checks = [
@@ -1033,9 +1034,9 @@ class VWorldService:
                             check_result = kakao.get_road_name_by_coord(check_lng, check_lat)
                             if check_result.get('road_name') == road_name:
                                 found_directions.append(dir_name)
+                                found_points[dir_name] = (check_lng, check_lat)
 
                     # 8방향을 4방향으로 매핑하여 도로 방향 결정
-                    # 대각선 방향은 주 방향으로 매핑 (NE→north, SE→south 등)
                     direction_mapping = {
                         'N': 'north', 'NE': 'north', 'NW': 'north',
                         'S': 'south', 'SE': 'south', 'SW': 'south',
@@ -1043,7 +1044,6 @@ class VWorldService:
                     }
 
                     # 발견된 방향들을 4방향으로 변환하고 우선순위 적용
-                    # 우선순위: north > south > east > west (일조권 때문에 북쪽 우선)
                     priority_order = ['north', 'south', 'east', 'west']
                     mapped_directions = set()
                     for d in found_directions:
@@ -1055,10 +1055,34 @@ class VWorldService:
                             direction = priority_dir
                             break
 
+                    # 도로 각도 계산 (2개 이상 포인트가 있을 때)
+                    road_angle = None
+                    if len(found_points) >= 2:
+                        points = list(found_points.values())
+                        # 가장 먼 두 점 찾기
+                        max_dist = 0
+                        p1, p2 = points[0], points[1]
+                        for i, pi in enumerate(points):
+                            for pj in points[i+1:]:
+                                dist = (pi[0] - pj[0])**2 + (pi[1] - pj[1])**2
+                                if dist > max_dist:
+                                    max_dist = dist
+                                    p1, p2 = pi, pj
+
+                        # 각도 계산 (동쪽=0°, 반시계)
+                        dx = p2[0] - p1[0]
+                        dy = p2[1] - p1[1]
+                        # 경도/위도를 미터로 변환 시 고려
+                        dx_m = dx * 111320 * math.cos(math.radians(parcel_center['lat']))
+                        dy_m = dy * 111320
+                        road_angle = math.degrees(math.atan2(dy_m, dx_m))
+
                     kakao_roads.append({
                         'direction': direction,
                         'road_name': road_name,
                         'road_address': road_address,
+                        'angle': road_angle,  # 도로 각도 (도 단위, 동쪽=0°)
+                        'found_directions': found_directions,  # 디버깅용
                     })
                 else:
                     # 2. 필지 중심에서 도로명을 찾지 못한 경우 경계 검색으로 fallback

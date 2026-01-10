@@ -214,6 +214,8 @@ export interface KakaoRoad {
   direction: 'north' | 'south' | 'east' | 'west'
   road_name: string  // 도로명 (예: '연북로')
   road_address: string  // 전체 도로명 주소
+  angle?: number  // 도로 각도 (도 단위, 동쪽=0°, 반시계 방향)
+  found_directions?: string[]  // 발견된 방향들 (디버깅용)
 }
 
 export interface AdjacentRoadsResponse {

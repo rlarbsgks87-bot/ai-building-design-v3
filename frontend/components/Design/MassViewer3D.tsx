@@ -73,6 +73,7 @@ interface KakaoRoad {
   direction: 'north' | 'south' | 'east' | 'west'
   road_name: string  // 도로명 (예: '연북로')
   road_address: string  // 전체 도로명 주소
+  angle?: number  // 도로 각도 (도 단위, 동쪽=0°, 반시계 방향)
 }
 
 interface MassViewer3DProps {
@@ -861,23 +862,40 @@ function LandBoundary({
           />
         ))
       ) : (
-        // Fallback: 카카오 API 기반 도로 방향에 따라 동적 배치 + 필지 형상 기반 회전
+        // Fallback: 카카오 API 기반 도로 방향 + 각도로 정확한 도로 배치
         (() => {
-          // 도로 방향 결정 (카카오 API 기반, 기본값: south)
-          const roadDirection = kakaoRoads?.[0]?.direction || 'south'
-          const roadName = kakaoRoads?.[0]?.road_name || '도로'
+          // 도로 방향 및 각도 (카카오 API 기반)
+          const roadData = kakaoRoads?.[0]
+          const roadDirection = roadData?.direction || 'south'
+          const roadName = roadData?.road_name || '도로'
+          const apiRoadAngle = roadData?.angle  // 도 단위 (동쪽=0°, 반시계)
           const isNorthSouth = roadDirection === 'north' || roadDirection === 'south'
           const isNorth = roadDirection === 'north'
           const isEast = roadDirection === 'east'
 
-          // 필지 폴리곤에서 도로 접합 변의 각도 계산
+          // 도로 위치 및 회전 계산
           let roadRotation = 0 // Y축 회전 (라디안)
           let roadCenterX = 0
           let roadCenterZ = 0
           let roadLength = width + 10
 
-          if (isNorthSouth) {
-            // 북/남 방향 도로
+          // API에서 제공한 각도가 있으면 그것을 사용
+          if (apiRoadAngle !== undefined && apiRoadAngle !== null) {
+            // API 각도: 도 단위, 동쪽=0°, 반시계 방향
+            // Three.js Y축 회전: 라디안, 반시계 방향
+            // 도로를 X축(동서) 방향으로 놓고 Y축 회전
+            roadRotation = -apiRoadAngle * (Math.PI / 180)
+
+            // 방향에 따른 위치 설정
+            if (isNorthSouth) {
+              roadCenterZ = isNorth ? depth / 2 + 4 : -depth / 2 - 4
+              roadLength = width + 10
+            } else {
+              roadCenterX = isEast ? width / 2 + 4 : -width / 2 - 4
+              roadLength = depth + 10
+            }
+          } else if (isNorthSouth) {
+            // Fallback: 필지 폴리곤에서 도로 접합 변의 각도 계산
             roadCenterZ = isNorth ? depth / 2 + 4 : -depth / 2 - 4
             roadLength = width + 10
 
