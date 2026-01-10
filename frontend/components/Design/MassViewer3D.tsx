@@ -722,13 +722,6 @@ function AdjacentParcelPolygon({
   parcel: AdjacentParcel
   landCenter: [number, number]  // [lng, lat] 대지 중심점
 }) {
-  // 디버그: 건축물대장 건물 확인
-  useEffect(() => {
-    if (parcel.has_registry) {
-      console.log('Registry building:', parcel.pnu, 'height:', parcel.height, 'geometry:', parcel.geometry?.length || 0, 'points')
-    }
-  }, [parcel])
-
   // 필지 폴리곤을 대지 중심 기준 로컬 좌표로 변환
   const { parcelShape, boundaryPoints, labelPosition, jimokLabel } = useMemo(() => {
     if (!parcel.geometry || parcel.geometry.length < 3) {
@@ -792,135 +785,42 @@ function AdjacentParcelPolygon({
     }
   }
 
-  // 건물 높이 (건축물대장 데이터 기반)
-  const buildingHeight = parcel.height || (parcel.floors ? parcel.floors * 3 : 0)
-
-  // 필지 폴리곤에서 건물 박스 크기와 위치 계산 (1m 이격, 건축물대장 데이터 활용)
-  const buildingBox = useMemo(() => {
-    const SETBACK = 1  // 필지 경계에서 1m 이격
-
-    if (!parcel.geometry || parcel.geometry.length < 3) {
-      // geometry가 없으면 기본값 사용 (최대 10m)
-      const defaultWidth = Math.min(Math.max((parcel.width || 8) * 0.6, 3), 10)
-      const defaultDepth = Math.min(Math.max((parcel.depth || 8) * 0.6, 3), 10)
-      return {
-        width: defaultWidth,
-        depth: defaultDepth,
-        centerX: labelPosition[0],
-        centerZ: labelPosition[2],
-      }
-    }
-
-    const centerLng = landCenter[0]
-    const centerLat = landCenter[1]
-    const metersPerDegreeLat = 111320
-    const metersPerDegreeLng = 111320 * Math.cos(centerLat * Math.PI / 180)
-
-    // 로컬 좌표로 변환
-    const localPoints = parcel.geometry.map(([lng, lat]) => {
-      const x = -(lng - centerLng) * metersPerDegreeLng
-      const z = (lat - centerLat) * metersPerDegreeLat
-      return { x, z }
-    })
-
-    // 바운딩 박스 계산
-    const xs = localPoints.map(p => p.x)
-    const zs = localPoints.map(p => p.z)
-    const minX = Math.min(...xs)
-    const maxX = Math.max(...xs)
-    const minZ = Math.min(...zs)
-    const maxZ = Math.max(...zs)
-
-    // 필지 바운딩 박스 크기
-    const parcelWidth = maxX - minX
-    const parcelDepth = maxZ - minZ
-
-    // 바운딩 박스 중심
-    const bboxCenterX = (minX + maxX) / 2
-    const bboxCenterZ = (minZ + maxZ) / 2
-
-    // 건물 크기 계산: 건폐율 60% 적용, 최대 15m 제한
-    const COVERAGE_RATIO = 0.6  // 건폐율 60%
-    const MAX_BUILDING_SIZE = 15  // 최대 건물 크기 15m
-
-    // 필지 면적의 건폐율만큼만 건물로 사용 (정사각형 근사)
-    const parcelArea = parcelWidth * parcelDepth
-    const buildingArea = parcelArea * COVERAGE_RATIO
-    const buildingSide = Math.sqrt(buildingArea)
-
-    // 필지 비율 유지하면서 건폐율 적용
-    const aspectRatio = parcelWidth / parcelDepth
-    let buildingW = Math.sqrt(buildingArea * aspectRatio)
-    let buildingD = buildingArea / buildingW
-
-    // 최소 3m, 최대 15m 제한
-    buildingW = Math.min(Math.max(buildingW, 3), MAX_BUILDING_SIZE)
-    buildingD = Math.min(Math.max(buildingD, 3), MAX_BUILDING_SIZE)
-
-    // 1m 이격 추가 확인 (필지 경계 안에 들어가도록)
-    buildingW = Math.min(buildingW, parcelWidth - SETBACK * 2)
-    buildingD = Math.min(buildingD, parcelDepth - SETBACK * 2)
-
-    return {
-      width: Math.max(buildingW, 3),
-      depth: Math.max(buildingD, 3),
-      centerX: bboxCenterX,
-      centerZ: bboxCenterZ,
-    }
-  }, [parcel.geometry, parcel.width, parcel.depth, landCenter, labelPosition])
-
-  const buildingWidth = buildingBox.width
-  const buildingDepth = buildingBox.depth
-  const buildingCenterX = buildingBox.centerX
-  const buildingCenterZ = buildingBox.centerZ
+  // 건축물대장이 있는 필지는 다른 색으로 강조
+  const parcelColor = parcel.has_registry ? '#f59e0b' : getJimokColor(parcel.jimok)  // 건축물대장 있으면 주황색
+  const parcelOpacity = parcel.has_registry ? 0.5 : 0.3  // 건축물대장 있으면 더 진하게
 
   return (
     <group>
-      {/* 필지 폴리곤 (반투명) */}
+      {/* 필지 폴리곤 (반투명) - 건축물대장 있으면 강조 */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.05, 0]} receiveShadow>
         <shapeGeometry args={[parcelShape]} />
         <meshStandardMaterial
-          color={getJimokColor(parcel.jimok)}
+          color={parcelColor}
           side={THREE.DoubleSide}
           transparent
-          opacity={0.3}
+          opacity={parcelOpacity}
         />
       </mesh>
 
-      {/* 필지 경계선 */}
+      {/* 필지 경계선 - 건축물대장 있으면 더 굵게 */}
       <Line
         points={boundaryPoints}
-        color={getJimokColor(parcel.jimok)}
-        lineWidth={1.5}
+        color={parcelColor}
+        lineWidth={parcel.has_registry ? 2.5 : 1.5}
       />
 
-      {/* 주변 건물 3D 박스 (건축물대장 데이터가 있고 높이가 있을 때만) - 바운딩 박스 중심에 배치 */}
-      {parcel.has_registry && buildingHeight > 0 && (
-        <mesh position={[buildingCenterX, buildingHeight / 2, buildingCenterZ]} castShadow receiveShadow>
-          <boxGeometry args={[Math.max(buildingWidth, 3), buildingHeight, Math.max(buildingDepth, 3)]} />
-          <meshStandardMaterial
-            color="#6b7280"  // 진한 회색 건물
-            transparent
-            opacity={0.7}
-          />
-        </mesh>
-      )}
-
-      {/* 건물명/층수 라벨 - 건축물대장 데이터가 있을 때만 */}
-      {parcel.has_registry && (parcel.name || parcel.floors) && (
+      {/* 건물 정보 라벨 - 건축물대장 데이터가 있을 때만 */}
+      {parcel.has_registry && (parcel.floors || parcel.main_purpose) && (
         <Text
-          position={[buildingCenterX, buildingHeight + 0.5, buildingCenterZ]}
-          fontSize={parcel.name ? 1.0 : 0.8}
+          position={[labelPosition[0], 0.5, labelPosition[2]]}
+          fontSize={0.8}
           color="#ffffff"
           anchorX="center"
           rotation={[-Math.PI / 2, 0, 0]}
           outlineWidth={0.03}
           outlineColor="#000000"
         >
-          {parcel.name
-            ? `${parcel.name}${parcel.floors ? ` ${parcel.floors}F` : ''}`
-            : `${parcel.floors}F`
-          }
+          {parcel.floors ? `${parcel.floors}F` : ''}{parcel.main_purpose ? ` ${parcel.main_purpose.slice(0, 4)}` : ''}
         </Text>
       )}
     </group>
