@@ -858,7 +858,7 @@ class VWorldService:
         import logging
         logger = logging.getLogger(__name__)
 
-        cache_key = f"adjacent_roads_v14:{pnu}"  # v14: 디버그 정보 추가
+        cache_key = f"adjacent_roads_v15:{pnu}"  # v15: Referer 헤더 추가
         cached = cache.get(cache_key)
         if cached:
             return cached
@@ -928,7 +928,11 @@ class VWorldService:
                     'size': 100,  # 최대 100개 필지
                 }
 
-                response = requests.get(self.DATA_URL, params=params, timeout=15)
+                # Referer 헤더 추가 (VWorld 도메인 검증 우회)
+                headers = {
+                    'Referer': 'http://localhost',  # VWorld는 Referer 체크
+                }
+                response = requests.get(self.DATA_URL, params=params, headers=headers, timeout=15)
                 data = response.json()
 
                 # 디버깅: VWorld 응답 로그
