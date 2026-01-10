@@ -219,11 +219,7 @@ function DesignPageContent() {
                 ...b,
                 jimok: b.jimok || '',
               })) as AdjacentParcel[]
-              const withRegistry = adjacentParcels.filter(p => p.has_registry)
-              console.log('Building footprints loaded:', adjacentParcels.length, 'buildings,', withRegistry.length, 'with registry')
-              if (withRegistry.length > 0) {
-                console.log('Registry buildings sample:', withRegistry.slice(0, 3).map(p => ({ pnu: p.pnu, floors: p.floors, height: p.height, has_registry: p.has_registry })))
-              }
+              console.log('Building footprints loaded:', adjacentParcels.length, 'buildings')
             } else if (roadsResponse.adjacent_parcels && roadsResponse.adjacent_parcels.length > 0) {
               // 건물 API 실패 시 기존 adjacent_parcels 사용 (fallback)
               adjacentParcels = roadsResponse.adjacent_parcels as AdjacentParcel[]

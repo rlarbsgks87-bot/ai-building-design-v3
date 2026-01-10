@@ -722,13 +722,6 @@ function AdjacentParcelPolygon({
   parcel: AdjacentParcel
   landCenter: [number, number]  // [lng, lat] 대지 중심점
 }) {
-  // 디버그: 건축물대장 데이터가 있는 건물 로그
-  useEffect(() => {
-    if (parcel.has_registry) {
-      console.log('Rendering registry building:', parcel.pnu, 'height:', parcel.height, 'floors:', parcel.floors)
-    }
-  }, [parcel])
-
   // 필지 폴리곤을 대지 중심 기준 로컬 좌표로 변환
   const { parcelShape, boundaryPoints, labelPosition, jimokLabel } = useMemo(() => {
     if (!parcel.geometry || parcel.geometry.length < 3) {
