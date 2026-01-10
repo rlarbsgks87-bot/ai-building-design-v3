@@ -83,6 +83,8 @@ interface AdjacentParcel {
   jibun: string                 // 지번
   direction: 'north' | 'south' | 'east' | 'west' | 'unknown'
   center: { lng: number; lat: number }
+  height?: number               // 건물 높이 (미터)
+  floors?: number               // 층수
 }
 
 interface MassViewer3DProps {
@@ -771,6 +773,9 @@ function AdjacentParcelPolygon({
     }
   }
 
+  // 건물 높이가 있으면 3D 박스 렌더링
+  const buildingHeight = parcel.height || 0
+
   return (
     <group>
       {/* 필지 폴리곤 (반투명) */}
@@ -791,10 +796,22 @@ function AdjacentParcelPolygon({
         lineWidth={1.5}
       />
 
-      {/* 지목 라벨 */}
-      {jimokLabel && (
+      {/* 주변 건물 3D 박스 (높이가 있을 때만) */}
+      {buildingHeight > 0 && (
+        <mesh position={[labelPosition[0], buildingHeight / 2, labelPosition[2]]} castShadow receiveShadow>
+          <boxGeometry args={[8, buildingHeight, 8]} />
+          <meshStandardMaterial
+            color="#9ca3af"  // 회색 건물
+            transparent
+            opacity={0.6}
+          />
+        </mesh>
+      )}
+
+      {/* 지목/층수 라벨 */}
+      {(jimokLabel || parcel.floors) && (
         <Text
-          position={labelPosition}
+          position={[labelPosition[0], buildingHeight + 0.5, labelPosition[2]]}
           fontSize={0.8}
           color="#ffffff"
           anchorX="center"
@@ -802,7 +819,7 @@ function AdjacentParcelPolygon({
           outlineWidth={0.03}
           outlineColor="#000000"
         >
-          {jimokLabel}
+          {parcel.floors ? `${parcel.floors}F` : jimokLabel}
         </Text>
       )}
     </group>

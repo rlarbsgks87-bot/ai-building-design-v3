@@ -220,6 +220,8 @@ export interface AdjacentParcel {
     lng: number
     lat: number
   }
+  height?: number               // 건물 높이 (미터)
+  floors?: number               // 층수
 }
 
 export interface KakaoRoad {
