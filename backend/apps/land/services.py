@@ -856,7 +856,7 @@ class VWorldService:
         """
         import math
 
-        cache_key = f"adjacent_roads_v9:{pnu}"  # v9: 도로 각도 계산 추가
+        cache_key = f"adjacent_roads_v10:{pnu}"  # v10: 도로 각도 -90~90° 정규화
         cached = cache.get(cache_key)
         if cached:
             return cached
@@ -1076,6 +1076,11 @@ class VWorldService:
                         dx_m = dx * 111320 * math.cos(math.radians(parcel_center['lat']))
                         dy_m = dy * 111320
                         road_angle = math.degrees(math.atan2(dy_m, dx_m))
+                        # -90° ~ 90° 범위로 정규화 (도로 기울기만 필요, 방향은 무관)
+                        while road_angle > 90:
+                            road_angle -= 180
+                        while road_angle < -90:
+                            road_angle += 180
 
                     kakao_roads.append({
                         'direction': direction,

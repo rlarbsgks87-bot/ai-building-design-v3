@@ -881,10 +881,10 @@ function LandBoundary({
 
           // API에서 제공한 각도가 있으면 그것을 사용
           if (apiRoadAngle !== undefined && apiRoadAngle !== null) {
-            // API 각도: 도 단위, 동쪽=0°, 반시계 방향
-            // Three.js Y축 회전: 라디안, 반시계 방향
+            // API 각도: 도 단위, 동쪽=0°, 반시계 방향 (-90° ~ 90° 범위)
+            // Three.js Y축 회전: 양수 = 반시계 방향 (위에서 내려다볼 때)
             // 도로를 X축(동서) 방향으로 놓고 Y축 회전
-            roadRotation = -apiRoadAngle * (Math.PI / 180)
+            roadRotation = apiRoadAngle * (Math.PI / 180)
 
             // 방향에 따른 위치 설정
             if (isNorthSouth) {
