@@ -81,6 +81,15 @@ interface AdjacentRoad {
   center: { lng: number; lat: number }
 }
 
+interface AdjacentParcel {
+  pnu: string
+  geometry: [number, number][]  // [lng, lat][] 폴리곤 좌표
+  jimok: string                 // 지목 (대, 전, 답 등)
+  jibun: string                 // 지번 (예: "50-11대")
+  direction: 'north' | 'south' | 'east' | 'west' | 'unknown'
+  center: { lng: number; lat: number }
+}
+
 interface KakaoRoad {
   direction: 'north' | 'south' | 'east' | 'west'
   road_name: string  // 도로명 (예: '연북로')
@@ -102,6 +111,7 @@ interface LandInfo {
   }
   polygon?: [number, number][]  // [lng, lat][] 지적도 폴리곤 좌표
   adjacentRoads?: AdjacentRoad[]  // 인접 도로 데이터 (VWorld 지적도)
+  adjacentParcels?: AdjacentParcel[]  // 주변 필지 데이터 (VWorld 지적도)
   kakaoRoads?: KakaoRoad[]  // 도로명 정보 (Kakao API fallback)
   roadWidth?: { min: number; max: number; average: number; source: string }  // 도로 폭 정보
 }
@@ -169,8 +179,9 @@ function DesignPageContent() {
             console.warn('Failed to fetch parcel geometry, using square approximation:', geomError)
           }
 
-          // 인접 도로 데이터 가져오기 (지적도 + 카카오 fallback)
+          // 인접 도로 및 주변 필지 데이터 가져오기
           let adjacentRoads: AdjacentRoad[] | undefined
+          let adjacentParcels: AdjacentParcel[] | undefined
           let kakaoRoads: KakaoRoad[] | undefined
           let roadWidth: { min: number; max: number; average: number; source: string } | undefined
           try {
@@ -179,6 +190,10 @@ function DesignPageContent() {
               if (roadsResponse.roads && roadsResponse.roads.length > 0) {
                 adjacentRoads = roadsResponse.roads
                 console.log('VWorld roads loaded:', adjacentRoads.length, 'roads')
+              }
+              if (roadsResponse.adjacent_parcels && roadsResponse.adjacent_parcels.length > 0) {
+                adjacentParcels = roadsResponse.adjacent_parcels as AdjacentParcel[]
+                console.log('Adjacent parcels loaded:', adjacentParcels.length, 'parcels')
               }
               if (roadsResponse.kakao_roads && roadsResponse.kakao_roads.length > 0) {
                 kakaoRoads = roadsResponse.kakao_roads
@@ -205,6 +220,7 @@ function DesignPageContent() {
             dimensions: dimensions,
             polygon: polygon,
             adjacentRoads: adjacentRoads,
+            adjacentParcels: adjacentParcels,
             kakaoRoads: kakaoRoads,
             roadWidth: roadWidth,
           })
@@ -668,6 +684,7 @@ function DesignPageContent() {
             landDimensions={landInfo.dimensions}
             landPolygon={landInfo.polygon}
             adjacentRoads={landInfo.adjacentRoads}
+            adjacentParcels={landInfo.adjacentParcels}
             kakaoRoads={landInfo.kakaoRoads}
             roadWidth={landInfo.roadWidth}
             useZone={landInfo.useZone}

@@ -210,6 +210,18 @@ export interface AdjacentRoad {
   }
 }
 
+export interface AdjacentParcel {
+  pnu: string
+  geometry: [number, number][]  // [lng, lat][] 폴리곤 좌표
+  jimok: string                 // 지목 (대, 전, 답 등)
+  jibun: string                 // 지번 (예: "50-11대")
+  direction: 'north' | 'south' | 'east' | 'west' | 'unknown'
+  center: {
+    lng: number
+    lat: number
+  }
+}
+
 export interface KakaoRoad {
   direction: 'north' | 'south' | 'east' | 'west'
   road_name: string  // 도로명 (예: '연북로')
@@ -228,6 +240,7 @@ export interface RoadWidth {
 export interface AdjacentRoadsResponse {
   success: boolean
   roads: AdjacentRoad[]
+  adjacent_parcels?: AdjacentParcel[]  // 주변 필지 (도로 제외)
   kakao_roads?: KakaoRoad[]  // Kakao API에서 조회한 도로명 (VWorld 도로 없을 때 fallback)
   parcel_center: {
     lng: number

@@ -856,7 +856,7 @@ class VWorldService:
         """
         import math
 
-        cache_key = f"adjacent_roads_v11:{pnu}"  # v11: 도로 폭 정보 추가
+        cache_key = f"adjacent_roads_v12:{pnu}"  # v12: 주변 필지 정보 추가
         cached = cache.get(cache_key)
         if cached:
             return cached
@@ -903,6 +903,7 @@ class VWorldService:
         }
 
         roads = []
+        adjacent_parcels = []  # 주변 필지 (도로 제외)
 
         if self.api_key:
             try:
@@ -948,10 +949,6 @@ class VWorldService:
                                     jimok = char
                                     break
 
-                        # 지목이 '도'(도로)인 경우만 포함
-                        if jimok != '도':
-                            continue
-
                         # 폴리곤 좌표 추출
                         coords = geometry.get('coordinates', [[]])
                         geom_type = geometry.get('type', '')
@@ -966,15 +963,15 @@ class VWorldService:
                         if not polygon_coords:
                             continue
 
-                        # 도로 중심점 계산
-                        road_lngs = [c[0] for c in polygon_coords]
-                        road_lats = [c[1] for c in polygon_coords]
-                        road_center_lng = sum(road_lngs) / len(road_lngs)
-                        road_center_lat = sum(road_lats) / len(road_lats)
+                        # 중심점 계산
+                        center_lngs = [c[0] for c in polygon_coords]
+                        center_lats = [c[1] for c in polygon_coords]
+                        center_lng = sum(center_lngs) / len(center_lngs)
+                        center_lat = sum(center_lats) / len(center_lats)
 
-                        # 필지 중심과 도로 중심의 상대 위치로 방향 결정
-                        dx = road_center_lng - parcel_center['lng']
-                        dy = road_center_lat - parcel_center['lat']
+                        # 필지 중심과의 상대 위치로 방향 결정
+                        dx = center_lng - parcel_center['lng']
+                        dy = center_lat - parcel_center['lat']
 
                         # 방향 결정 (북/남/동/서)
                         if abs(dx) > abs(dy):
@@ -982,13 +979,20 @@ class VWorldService:
                         else:
                             direction = 'north' if dy > 0 else 'south'
 
-                        roads.append({
+                        parcel_data = {
                             'pnu': feature_pnu,
                             'geometry': polygon_coords,
                             'jimok': jimok,
+                            'jibun': jibun,
                             'direction': direction,
-                            'center': {'lng': road_center_lng, 'lat': road_center_lat},
-                        })
+                            'center': {'lng': center_lng, 'lat': center_lat},
+                        }
+
+                        # 지목이 '도'(도로)인 경우 roads에, 아니면 adjacent_parcels에
+                        if jimok == '도':
+                            roads.append(parcel_data)
+                        else:
+                            adjacent_parcels.append(parcel_data)
 
             except Exception as e:
                 pass  # 실패 시 빈 배열 반환
@@ -1136,6 +1140,7 @@ class VWorldService:
         result = {
             'success': True,
             'roads': roads,
+            'adjacent_parcels': adjacent_parcels,  # 주변 필지 (도로 제외)
             'kakao_roads': kakao_roads,  # Kakao API에서 조회한 도로명 정보
             'parcel_center': parcel_center,
             'road_width': road_width,  # 도로 폭 정보 (use_zones에서 추출)

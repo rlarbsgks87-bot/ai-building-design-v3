@@ -76,12 +76,22 @@ interface KakaoRoad {
   angle?: number  // 도로 각도 (도 단위, 동쪽=0°, 반시계 방향)
 }
 
+interface AdjacentParcel {
+  pnu: string
+  geometry: [number, number][]  // [lng, lat][] 폴리곤 좌표
+  jimok: string                 // 지목 (대, 전, 답 등)
+  jibun: string                 // 지번
+  direction: 'north' | 'south' | 'east' | 'west' | 'unknown'
+  center: { lng: number; lat: number }
+}
+
 interface MassViewer3DProps {
   building: BuildingConfig
   landArea: number
   landDimensions?: { width: number; depth: number }  // VWorld에서 가져온 실제 필지 크기
   landPolygon?: [number, number][]  // [lng, lat][] 지적도 폴리곤 좌표
   adjacentRoads?: AdjacentRoad[]  // 인접 도로 데이터 (지적도 기반)
+  adjacentParcels?: AdjacentParcel[]  // 주변 필지 데이터 (지적도 기반)
   kakaoRoads?: KakaoRoad[]  // 도로명 정보 (Kakao API fallback)
   roadWidth?: { min: number; max: number; average: number; source: string }  // 도로 폭 정보
   useZone?: string  // 용도지역 (주거지역인 경우 일조권 적용)
@@ -690,11 +700,121 @@ function RoadPolygon({
   )
 }
 
+// 주변 필지 폴리곤 렌더링
+function AdjacentParcelPolygon({
+  parcel,
+  landCenter,
+}: {
+  parcel: AdjacentParcel
+  landCenter: [number, number]  // [lng, lat] 대지 중심점
+}) {
+  // 필지 폴리곤을 대지 중심 기준 로컬 좌표로 변환
+  const { parcelShape, boundaryPoints, labelPosition, jimokLabel } = useMemo(() => {
+    if (!parcel.geometry || parcel.geometry.length < 3) {
+      return { parcelShape: null, boundaryPoints: [], labelPosition: [0, 0, 0], jimokLabel: '' }
+    }
+
+    const centerLng = landCenter[0]
+    const centerLat = landCenter[1]
+
+    // WGS84 → 미터 변환
+    const metersPerDegreeLat = 111320
+    const metersPerDegreeLng = 111320 * Math.cos(centerLat * Math.PI / 180)
+
+    // 폴리곤 좌표 변환
+    const localPoints: [number, number][] = parcel.geometry.map(([lng, lat]) => {
+      const x = (lng - centerLng) * metersPerDegreeLng
+      const z = (lat - centerLat) * metersPerDegreeLat
+      return [x, z]
+    })
+
+    // Three.js Shape 생성 (XY 평면 → XZ 평면으로 회전)
+    const shape = new THREE.Shape()
+    shape.moveTo(localPoints[0][0], -localPoints[0][1])
+    for (let i = 1; i < localPoints.length; i++) {
+      shape.lineTo(localPoints[i][0], -localPoints[i][1])
+    }
+    shape.closePath()
+
+    // 경계선 포인트
+    const boundaryPts: [number, number, number][] = localPoints.map(([x, z]) => [x, 0.01, z])
+    if (boundaryPts.length > 0) {
+      boundaryPts.push([...boundaryPts[0]])
+    }
+
+    // 라벨 위치 (필지 중심)
+    const parcelCenterX = (parcel.center.lng - centerLng) * metersPerDegreeLng
+    const parcelCenterZ = (parcel.center.lat - centerLat) * metersPerDegreeLat
+
+    // 지목 라벨 (지번에서 숫자 제거)
+    const label = parcel.jimok || ''
+
+    return {
+      parcelShape: shape,
+      boundaryPoints: boundaryPts,
+      labelPosition: [parcelCenterX, 0.3, parcelCenterZ] as [number, number, number],
+      jimokLabel: label,
+    }
+  }, [parcel, landCenter])
+
+  if (!parcelShape) return null
+
+  // 지목에 따른 색상 (투명도 높게)
+  const getJimokColor = (jimok: string) => {
+    switch (jimok) {
+      case '대': return '#8b5cf6'  // 대지 - 보라
+      case '전': return '#22c55e'  // 전 - 녹색
+      case '답': return '#3b82f6'  // 답 - 파랑
+      case '임': return '#059669'  // 임야 - 진녹색
+      case '잡': return '#f59e0b'  // 잡종지 - 주황
+      default: return '#6b7280'   // 기타 - 회색
+    }
+  }
+
+  return (
+    <group>
+      {/* 필지 폴리곤 (반투명) */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.05, 0]} receiveShadow>
+        <shapeGeometry args={[parcelShape]} />
+        <meshStandardMaterial
+          color={getJimokColor(parcel.jimok)}
+          side={THREE.DoubleSide}
+          transparent
+          opacity={0.3}
+        />
+      </mesh>
+
+      {/* 필지 경계선 */}
+      <Line
+        points={boundaryPoints}
+        color={getJimokColor(parcel.jimok)}
+        lineWidth={1.5}
+      />
+
+      {/* 지목 라벨 */}
+      {jimokLabel && (
+        <Text
+          position={labelPosition}
+          fontSize={0.8}
+          color="#ffffff"
+          anchorX="center"
+          rotation={[-Math.PI / 2, 0, 0]}
+          outlineWidth={0.03}
+          outlineColor="#000000"
+        >
+          {jimokLabel}
+        </Text>
+      )}
+    </group>
+  )
+}
+
 // 대지 경계 및 이격선
 function LandBoundary({
   landDimensions,
   landPolygon,
   adjacentRoads,
+  adjacentParcels,
   kakaoRoads,
   roadWidth,
   setbacks,
@@ -703,6 +823,7 @@ function LandBoundary({
   landDimensions: { width: number; depth: number }
   landPolygon?: [number, number][]  // [lng, lat][] 지적도 폴리곤 좌표
   adjacentRoads?: AdjacentRoad[]  // 인접 도로 데이터
+  adjacentParcels?: AdjacentParcel[]  // 주변 필지 데이터
   kakaoRoads?: KakaoRoad[]  // 도로명 정보 (Kakao fallback)
   roadWidth?: { min: number; max: number; average: number; source: string }  // 도로 폭 정보
   setbacks: BuildingConfig['setbacks']
@@ -853,6 +974,17 @@ function LandBoundary({
       >
         {`북측 ${displaySetbacks.back}m`}
       </Text>
+
+      {/* 주변 필지 표시 (지적도 데이터) */}
+      {adjacentParcels && adjacentParcels.length > 0 && localPolygon && (
+        adjacentParcels.map((parcel, idx) => (
+          <AdjacentParcelPolygon
+            key={parcel.pnu || idx}
+            parcel={parcel}
+            landCenter={localPolygon.center}
+          />
+        ))
+      )}
 
       {/* 인접 도로 표시 (지적도 데이터 또는 fallback) */}
       {adjacentRoads && adjacentRoads.length > 0 && localPolygon ? (
@@ -1801,7 +1933,7 @@ function AutoRotate({ enabled = false }: { enabled?: boolean }) {
   return null
 }
 
-export function MassViewer3D({ building, landArea, landDimensions: propLandDimensions, landPolygon, adjacentRoads, kakaoRoads, roadWidth, useZone = '제2종일반주거지역', showNorthSetback = true, floorSetbacks, address }: MassViewer3DProps) {
+export function MassViewer3D({ building, landArea, landDimensions: propLandDimensions, landPolygon, adjacentRoads, adjacentParcels, kakaoRoads, roadWidth, useZone = '제2종일반주거지역', showNorthSetback = true, floorSetbacks, address }: MassViewer3DProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('perspective')
   const [showExportMenu, setShowExportMenu] = useState(false)
   const landDimensions = useMemo(() => calculateLandDimensions(landArea, propLandDimensions), [landArea, propLandDimensions])
@@ -1894,6 +2026,7 @@ export function MassViewer3D({ building, landArea, landDimensions: propLandDimen
           landDimensions={landDimensions}
           landPolygon={landPolygon}
           adjacentRoads={adjacentRoads}
+          adjacentParcels={adjacentParcels}
           kakaoRoads={kakaoRoads}
           roadWidth={roadWidth}
           setbacks={building.setbacks}
