@@ -33,18 +33,23 @@ interface BuildingConfig {
 // - 사선 비율: 1:2 (수평:수직)
 // - 사선 시작점: 경계선에서 10m 높이 → 5m 이격 (10÷2=5)
 export function calculateNorthSetback(height: number, useZone?: string): number {
-  // 주거지역이 아니면 일조권 적용 안함
-  if (useZone && !useZone.includes('주거')) {
-    return 0
+  // 일조권 적용 대상: 전용주거지역, 일반주거지역만
+  // 준주거지역, 상업지역, 공업지역 등은 적용 안됨
+  if (useZone) {
+    const zone = useZone.toLowerCase()
+    // 준주거지역은 일조권 적용 안됨
+    if (zone.includes('준주거')) return 0
+    // 주거지역 외(상업, 공업, 녹지 등)는 적용 안됨
+    if (!zone.includes('주거')) return 0
   }
 
   if (height <= 10) {
-    // 10m 이하: 1.5m 이격
+    // 10m 이하: 1.5m 이격 (건축법 시행령 제86조)
     return 1.5
   } else {
     // 10m 초과: 해당 높이의 1/2 이격
     // 법 조문: "해당 건축물 각 부분 높이의 2분의 1 이상"
-    // 예: 12m → 6m, 14m → 7m, 20m → 10m
+    // 예: 12m → 6m, 16.5m → 8.25m, 20m → 10m
     return height / 2
   }
 }
@@ -1581,18 +1586,26 @@ function NorthSetbackEnvelope({
   landDimensions,
   maxHeight,
   useZone,
+  buildingHeight,
 }: {
   landDimensions: { width: number; depth: number }
   maxHeight: number
   useZone?: string
+  buildingHeight?: number
 }) {
   const { width, depth } = landDimensions
   const northBoundary = depth / 2 // 북쪽 대지경계선 (양의 Z방향)
 
-  // 주거지역이 아니면 표시 안함
-  if (useZone && !useZone.includes('주거')) {
-    return null
+  // 일조권 적용 대상: 전용주거지역, 일반주거지역만
+  if (useZone) {
+    const zone = useZone.toLowerCase()
+    if (zone.includes('준주거') || !zone.includes('주거')) {
+      return null
+    }
   }
+
+  // 실제 건물 높이에서 필요한 이격거리
+  const actualBuildingSetback = buildingHeight ? getNorthSetbackAtHeight(buildingHeight) : 0
 
   // 10m 높이에서의 이격거리: 10/2 = 5m
   const setbackAt10m = 5
@@ -1860,18 +1873,20 @@ function NorthSetbackEnvelope({
         {`H÷2 사선 (1:2)`}
       </Text>
 
-      {/* 최대 높이에서의 이격거리 라벨 */}
-      <Text
-        position={[0, maxHeight + 1, northBoundary - maxSetback / 2]}
-        fontSize={0.8}
-        color="#ff0000"
-        anchorX="center"
-        rotation={[-Math.PI / 2, 0, 0]}
-        outlineWidth={0.03}
-        outlineColor="#000"
-      >
-        {`${maxSetback.toFixed(1)}m 이격 (${maxHeight}m÷2)`}
-      </Text>
+      {/* 실제 건물 높이에서의 이격거리 라벨 */}
+      {buildingHeight && buildingHeight > 10 && (
+        <Text
+          position={[0, buildingHeight + 0.5, northBoundary - actualBuildingSetback / 2]}
+          fontSize={0.7}
+          color="#00ff00"
+          anchorX="center"
+          rotation={[-Math.PI / 2, 0, 0]}
+          outlineWidth={0.03}
+          outlineColor="#000"
+        >
+          {`건물 ${buildingHeight.toFixed(1)}m → ${actualBuildingSetback.toFixed(1)}m 이격`}
+        </Text>
+      )}
     </group>
   )
 }
@@ -2065,8 +2080,9 @@ export function MassViewer3D({ building, landArea, landDimensions: propLandDimen
         {showSunlightEnvelope && (
           <NorthSetbackEnvelope
             landDimensions={landDimensions}
-            maxHeight={buildingHeight + 10}
+            maxHeight={Math.max(buildingHeight + 3, buildingHeight * 1.1)}
             useZone={useZone}
+            buildingHeight={buildingHeight}
           />
         )}
 
