@@ -861,30 +861,59 @@ function LandBoundary({
           />
         ))
       ) : (
-        // Fallback: 카카오 API 기반 도로 방향에 따라 동적 배치
+        // Fallback: 카카오 API 기반 도로 방향에 따라 동적 배치 + 필지 형상 기반 회전
         (() => {
           // 도로 방향 결정 (카카오 API 기반, 기본값: south)
           const roadDirection = kakaoRoads?.[0]?.direction || 'south'
           const roadName = kakaoRoads?.[0]?.road_name || '도로'
-
-          // 방향에 따른 Z 위치 계산 (+Z = 북쪽, -Z = 남쪽)
           const isNorth = roadDirection === 'north'
-          const roadZ = isNorth ? depth / 2 + 4 : -depth / 2 - 4
-          const boundaryZ = isNorth ? depth / 2 : -depth / 2
+
+          // 필지 폴리곤에서 도로 접합 변의 각도 계산
+          let roadRotation = 0 // Y축 회전 (라디안)
+          let roadCenterX = 0
+          let roadCenterZ = isNorth ? depth / 2 + 4 : -depth / 2 - 4
+
+          if (localPolygon && localPolygon.points.length >= 3) {
+            // 각 변의 중심 Z 좌표를 계산하여 가장 북쪽/남쪽 변 찾기
+            const edges = localPolygon.points.map((p, i) => {
+              const next = localPolygon.points[(i + 1) % localPolygon.points.length]
+              const midZ = (p[1] + next[1]) / 2  // Z = 위도 방향
+              const midX = (p[0] + next[0]) / 2
+              const dx = next[0] - p[0]
+              const dz = next[1] - p[1]
+              const angle = Math.atan2(dz, dx)
+              return { midZ, midX, angle, length: Math.sqrt(dx*dx + dz*dz) }
+            })
+
+            // 도로 방향에 따라 가장 북쪽 또는 남쪽 변 선택
+            const targetEdge = isNorth
+              ? edges.reduce((max, e) => e.midZ > max.midZ ? e : max, edges[0])
+              : edges.reduce((min, e) => e.midZ < min.midZ ? e : min, edges[0])
+
+            roadRotation = -targetEdge.angle // Three.js Y축 회전
+            roadCenterX = targetEdge.midX
+            roadCenterZ = targetEdge.midZ + (isNorth ? 4 : -4)
+          }
+
+          // 도로 길이 (필지 너비 + 여유)
+          const roadLength = width + 10
 
           return (
-            <group>
+            <group
+              position={[roadCenterX, 0, roadCenterZ]}
+              rotation={[0, roadRotation, 0]}
+            >
               {/* 도로 평면 */}
-              <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.03, roadZ]} receiveShadow>
-                <planeGeometry args={[width + 6, 8]} />
+              <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.03, 0]} receiveShadow>
+                <planeGeometry args={[roadLength, 8]} />
                 <meshStandardMaterial color="#4a5568" side={THREE.DoubleSide} />
               </mesh>
 
               {/* 도로 중앙선 (흰색 점선) */}
               <Line
                 points={[
-                  [-width / 2 - 3, 0.01, roadZ],
-                  [width / 2 + 3, 0.01, roadZ],
+                  [-roadLength / 2, 0.01, 0],
+                  [roadLength / 2, 0.01, 0],
                 ]}
                 color="#ffffff"
                 lineWidth={2}
@@ -896,8 +925,8 @@ function LandBoundary({
               {/* 도로 경계선 (대지측) */}
               <Line
                 points={[
-                  [-width / 2 - 3, 0.02, boundaryZ],
-                  [width / 2 + 3, 0.02, boundaryZ],
+                  [-roadLength / 2, 0.02, isNorth ? -4 : 4],
+                  [roadLength / 2, 0.02, isNorth ? -4 : 4],
                 ]}
                 color="#9ca3af"
                 lineWidth={2}
@@ -905,7 +934,7 @@ function LandBoundary({
 
               {/* 도로 라벨 */}
               <Text
-                position={[0, 0.5, roadZ]}
+                position={[0, 0.5, 0]}
                 fontSize={1.2}
                 color="#ffffff"
                 anchorX="center"
@@ -918,7 +947,7 @@ function LandBoundary({
 
               {/* 도로 방향 표시 (북측/남측) */}
               <Text
-                position={[width / 2 + 4, 0.5, roadZ]}
+                position={[roadLength / 2 - 2, 0.5, 0]}
                 fontSize={0.8}
                 color="#fbbf24"
                 anchorX="left"
@@ -926,12 +955,12 @@ function LandBoundary({
                 outlineWidth={0.03}
                 outlineColor="#000000"
               >
-                {isNorth ? '(북측 도로)' : '(남측 도로)'}
+                {isNorth ? '(북측)' : '(남측)'}
               </Text>
 
               {/* 도로 방향 화살표 (양방향 통행) */}
               <Text
-                position={[-width / 2 - 1, 0.5, roadZ]}
+                position={[-roadLength / 2 + 1, 0.5, 0]}
                 fontSize={1}
                 color="#ffffff"
                 anchorX="center"
@@ -940,7 +969,7 @@ function LandBoundary({
                 ←
               </Text>
               <Text
-                position={[width / 2 + 1, 0.5, roadZ]}
+                position={[roadLength / 2 - 1, 0.5, 0]}
                 fontSize={1}
                 color="#ffffff"
                 anchorX="center"
