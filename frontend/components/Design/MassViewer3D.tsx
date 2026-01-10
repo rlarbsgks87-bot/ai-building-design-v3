@@ -785,42 +785,41 @@ function AdjacentParcelPolygon({
     }
   }
 
-  // 건축물대장이 있는 필지는 다른 색으로 강조
-  const parcelColor = parcel.has_registry ? '#f59e0b' : getJimokColor(parcel.jimok)  // 건축물대장 있으면 주황색
-  const parcelOpacity = parcel.has_registry ? 0.5 : 0.3  // 건축물대장 있으면 더 진하게
+  // 지목 기반 색상 (건축물대장 정보는 필지 위치와 맞지 않아 사용 안함)
+  const parcelColor = getJimokColor(parcel.jimok)
 
   return (
     <group>
-      {/* 필지 폴리곤 (반투명) - 건축물대장 있으면 강조 */}
+      {/* 필지 폴리곤 (반투명) */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.05, 0]} receiveShadow>
         <shapeGeometry args={[parcelShape]} />
         <meshStandardMaterial
           color={parcelColor}
           side={THREE.DoubleSide}
           transparent
-          opacity={parcelOpacity}
+          opacity={0.25}
         />
       </mesh>
 
-      {/* 필지 경계선 - 건축물대장 있으면 더 굵게 */}
+      {/* 필지 경계선 */}
       <Line
         points={boundaryPoints}
         color={parcelColor}
-        lineWidth={parcel.has_registry ? 2.5 : 1.5}
+        lineWidth={1.5}
       />
 
-      {/* 건물 정보 라벨 - 건축물대장 데이터가 있을 때만 */}
-      {parcel.has_registry && (parcel.floors || parcel.main_purpose) && (
+      {/* 지목 라벨 (지번) */}
+      {jimokLabel && (
         <Text
-          position={[labelPosition[0], 0.5, labelPosition[2]]}
-          fontSize={0.8}
-          color="#ffffff"
+          position={[labelPosition[0], 0.3, labelPosition[2]]}
+          fontSize={0.6}
+          color="#9ca3af"
           anchorX="center"
           rotation={[-Math.PI / 2, 0, 0]}
-          outlineWidth={0.03}
-          outlineColor="#000000"
+          outlineWidth={0.02}
+          outlineColor="#1f2937"
         >
-          {parcel.floors ? `${parcel.floors}F` : ''}{parcel.main_purpose ? ` ${parcel.main_purpose.slice(0, 4)}` : ''}
+          {jimokLabel}
         </Text>
       )}
     </group>
