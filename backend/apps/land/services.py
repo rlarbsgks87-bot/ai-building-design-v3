@@ -1121,7 +1121,6 @@ class VWorldService:
                     road_address = center_result.get('road_address', '')
 
                     # 방향 결정: 8방향 검색으로 도로 위치 정확히 파악
-                    import math
                     offset_m = 8  # 8m 거리
                     lat_offset = offset_m / 111320
                     lng_offset = offset_m / (111320 * math.cos(math.radians(parcel_center['lat'])))
