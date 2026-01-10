@@ -806,26 +806,35 @@ class VWorldService:
         """
         import math
 
-        cache_key = f"adjacent_roads_v4:{pnu}"  # v4: 30m 오프셋
+        cache_key = f"adjacent_roads_v5:{pnu}"  # v5: VWorld 실패 처리
         cached = cache.get(cache_key)
         if cached:
             return cached
 
         # bbox가 없으면 먼저 필지 지오메트리를 조회
+        parcel_center = None
         if not bbox:
             parcel_geom = self.get_parcel_geometry(pnu)
-            if not parcel_geom.get('success'):
-                return {'success': False, 'error': '필지 지오메트리를 찾을 수 없습니다', 'roads': []}
-            bbox = parcel_geom.get('bbox')
-            parcel_center = parcel_geom.get('center', {})
-        else:
+            if parcel_geom.get('success'):
+                bbox = parcel_geom.get('bbox')
+                parcel_center = parcel_geom.get('center', {})
+            # 지오메트리 실패해도 계속 진행 (Kakao fallback 사용)
+
+        if bbox and not parcel_center:
             parcel_center = {
                 'lng': (bbox['minX'] + bbox['maxX']) / 2,
                 'lat': (bbox['minY'] + bbox['maxY']) / 2,
             }
 
-        if not bbox:
-            return {'success': False, 'error': 'bbox가 없습니다', 'roads': []}
+        # parcel_center가 없으면 빈 결과 반환 (VWorld와 bbox 모두 실패)
+        if not parcel_center:
+            return {
+                'success': True,
+                'roads': [],
+                'kakao_roads': [],
+                'parcel_center': None,
+                'error': 'VWorld API 일시적 오류'
+            }
 
         # bbox 확장 (약 50m 버퍼)
         lat_rad = math.radians(parcel_center['lat'])
