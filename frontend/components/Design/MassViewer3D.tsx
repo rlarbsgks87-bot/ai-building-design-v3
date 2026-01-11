@@ -164,70 +164,139 @@ function offsetPolygon(points: [number, number][], offset: number): [number, num
 }
 
 // 방향별 이격거리를 적용하는 폴리곤 축소
-// setbacks: { front(남쪽/-Z), back(북쪽/+Z), left(서쪽/+X), right(동쪽/-X) }
-// X축 반전됨: 동쪽=-X, 서쪽=+X
+// setbacks: { front(전면/도로), back(후면/일조권), left(좌측), right(우측) }
+// rotationAngle: 건물 회전 각도 (라디안). 0이면 기존 축 정렬 방식 사용
+// 엣지(변)의 법선 방향으로 이격거리 결정 (정점 위치가 아닌 변 방향 기준)
 function offsetPolygonDirectional(
   points: [number, number][],
-  setbacks: { front: number; back: number; left: number; right: number }
+  setbacks: { front: number; back: number; left: number; right: number },
+  rotationAngle: number = 0
 ): [number, number][] {
   if (points.length < 3) return points
 
+  // 중복 점 제거 (0.01m 이내의 점은 동일 점으로 간주)
+  const cleanedPoints: [number, number][] = []
+  for (let i = 0; i < points.length; i++) {
+    const curr = points[i]
+    const prev = cleanedPoints[cleanedPoints.length - 1]
+    if (!prev) {
+      cleanedPoints.push(curr)
+    } else {
+      const dist = Math.sqrt((curr[0] - prev[0]) ** 2 + (curr[1] - prev[1]) ** 2)
+      if (dist > 0.01) {
+        cleanedPoints.push(curr)
+      }
+    }
+  }
+  // 마지막 점과 첫 점도 비교
+  if (cleanedPoints.length > 1) {
+    const first = cleanedPoints[0]
+    const last = cleanedPoints[cleanedPoints.length - 1]
+    const dist = Math.sqrt((first[0] - last[0]) ** 2 + (first[1] - last[1]) ** 2)
+    if (dist < 0.01) {
+      cleanedPoints.pop()
+    }
+  }
+
+  if (cleanedPoints.length < 3) return points
+
   const result: [number, number][] = []
-  const n = points.length
+  const n = cleanedPoints.length
 
   // 폴리곤 방향 확인
-  const area = getPolygonArea(points)
+  const area = getPolygonArea(cleanedPoints)
   const direction = area >= 0 ? 1 : -1
 
-  // 폴리곤 중심 계산
-  let sumX = 0, sumZ = 0
-  for (const [x, z] of points) { sumX += x; sumZ += z }
-  const centerX = sumX / n
-  const centerZ = sumZ / n
+  // 각 엣지의 법선과 이격거리 계산
+  const edgeNormals: { nx: number; nz: number; offset: number }[] = []
 
   for (let i = 0; i < n; i++) {
-    const prev = points[(i - 1 + n) % n]
-    const curr = points[i]
-    const next = points[(i + 1) % n]
+    const p1 = cleanedPoints[i]
+    const p2 = cleanedPoints[(i + 1) % n]
 
-    // 현재 점에서 이전/다음 점으로의 벡터
-    const v1 = [curr[0] - prev[0], curr[1] - prev[1]]
-    const v2 = [next[0] - curr[0], next[1] - curr[1]]
+    const dx = p2[0] - p1[0]
+    const dz = p2[1] - p1[1]
+    const len = Math.sqrt(dx * dx + dz * dz)
+    if (len < 0.01) {
+      // 매우 짧은 엣지: 이전 엣지의 방향 사용 또는 기본값 0
+      edgeNormals.push({ nx: 0, nz: 0, offset: 0 })
+      continue
+    }
 
-    const len1 = Math.sqrt(v1[0] * v1[0] + v1[1] * v1[1])
-    const len2 = Math.sqrt(v2[0] * v2[0] + v2[1] * v2[1])
-    if (len1 === 0 || len2 === 0) continue
+    // 외부 법선 벡터 (반시계=양수 면적일 때 오른쪽이 외부)
+    const nx = direction * dz / len
+    const nz = -direction * dx / len
 
-    // 법선 벡터
-    const n1 = [direction * v1[1] / len1, -direction * v1[0] / len1]
-    const n2 = [direction * v2[1] / len2, -direction * v2[0] / len2]
+    // 법선 방향으로 이격거리 결정 (회전 각도 고려)
+    // 회전 각도가 있으면 회전된 좌표계에서 방향 판단
+    const cos = Math.cos(rotationAngle)
+    const sin = Math.sin(rotationAngle)
 
-    // 평균 법선
-    const avgNx = (n1[0] + n2[0]) / 2
-    const avgNy = (n1[1] + n2[1]) / 2
-    const avgLen = Math.sqrt(avgNx * avgNx + avgNy * avgNy)
+    // 건물 좌표계에서의 방향 벡터들과 법선의 내적 계산
+    // front: 건물 -Z 방향 = [sin(θ), -cos(θ)]
+    // back:  건물 +Z 방향 = [-sin(θ), cos(θ)]
+    // left:  건물 +X 방향 = [cos(θ), sin(θ)]
+    // right: 건물 -X 방향 = [-cos(θ), -sin(θ)]
+    const dotFront = nx * sin + nz * (-cos)  // 전면 방향과의 내적
+    const dotBack = nx * (-sin) + nz * cos   // 후면 방향과의 내적
+    const dotLeft = nx * cos + nz * sin      // 좌측 방향과의 내적
+    const dotRight = nx * (-cos) + nz * (-sin) // 우측 방향과의 내적
 
-    if (avgLen > 0) {
-      const scale = 1 / Math.max(avgLen, 0.5)
+    // 가장 큰 내적값의 방향으로 이격거리 적용
+    let offset: number
+    let direction_name: string
+    const maxDot = Math.max(dotFront, dotBack, dotLeft, dotRight)
+    if (maxDot === dotFront) {
+      offset = setbacks.front
+      direction_name = 'front'
+    } else if (maxDot === dotBack) {
+      offset = setbacks.back
+      direction_name = 'back'
+    } else if (maxDot === dotLeft) {
+      offset = setbacks.left
+      direction_name = 'left'
+    } else {
+      offset = setbacks.right
+      direction_name = 'right'
+    }
 
-      // 현재 점이 폴리곤 중심 기준 어느 방향에 있는지 판단하여 이격거리 결정
-      const relX = curr[0] - centerX
-      const relZ = curr[1] - centerZ
+    console.log(`[offsetPolygon] Edge ${i}: 방향=${direction_name}, offset=${offset}m, 법선=(${nx.toFixed(2)}, ${nz.toFixed(2)})`)
+    edgeNormals.push({ nx, nz, offset })
+  }
 
-      // 방향별 이격거리 선택 (주요 방향 기준)
-      // X축 반전: +X=서쪽(left), -X=동쪽(right)
-      let offset: number
-      if (Math.abs(relZ) > Math.abs(relX)) {
-        // Z 방향이 더 멀면 (북쪽/남쪽)
-        offset = relZ > 0 ? setbacks.back : setbacks.front
-      } else {
-        // X 방향이 더 멀면: +X=서쪽(left), -X=동쪽(right)
-        offset = relX > 0 ? setbacks.left : setbacks.right
-      }
+  // 각 정점에서 인접 엣지들의 평균 이격으로 오프셋
+  for (let i = 0; i < n; i++) {
+    const curr = cleanedPoints[i]
+    const prevEdge = edgeNormals[(i - 1 + n) % n]  // 이전 엣지 (curr로 끝나는)
+    const currEdge = edgeNormals[i]                 // 현재 엣지 (curr에서 시작)
 
+    // 두 엣지의 평균 법선과 평균 이격거리
+    const avgNx = (prevEdge.nx + currEdge.nx) / 2
+    const avgNz = (prevEdge.nz + currEdge.nz) / 2
+    const avgLen = Math.sqrt(avgNx * avgNx + avgNz * avgNz)
+
+    // 이격거리: 두 엣지 중 더 큰 값 사용 (보수적)
+    const offset = Math.max(prevEdge.offset, currEdge.offset)
+
+    // offset이 0이면 원본 점 그대로 사용
+    if (offset === 0) {
+      result.push(curr)
+      continue
+    }
+
+    if (avgLen > 0.1) {
+      // 법선 벡터 길이가 충분히 클 때만 스케일 적용
+      const scale = 1 / avgLen
       result.push([
         curr[0] - avgNx * scale * offset,
-        curr[1] - avgNy * scale * offset
+        curr[1] - avgNz * scale * offset
+      ])
+    } else if (avgLen > 0) {
+      // 날카로운 코너: 스케일 제한 (최대 3배)
+      const scale = 1 / Math.max(avgLen, 0.33)
+      result.push([
+        curr[0] - avgNx * scale * offset,
+        curr[1] - avgNz * scale * offset
       ])
     } else {
       result.push(curr)
@@ -237,8 +306,8 @@ function offsetPolygonDirectional(
   return result
 }
 
-// 폴리곤 내 최대 내접 사각형 계산 (근사)
-function getMaxInscribedRect(points: [number, number][]): {
+// 폴리곤 내 최대 내접 사각형 계산 (근사) - 회전 각도 고려
+function getMaxInscribedRect(points: [number, number][], rotationAngle: number = 0): {
   centerX: number
   centerZ: number
   width: number
@@ -257,13 +326,17 @@ function getMaxInscribedRect(points: [number, number][]): {
   const centerX = sumX / points.length
   const centerZ = sumZ / points.length
 
-  // 중심에서 각 방향으로 경계까지 거리 측정 (Ray Casting)
-  // X축 반전: +X=서쪽, -X=동쪽
+  // 회전된 방향으로 Ray Casting (건물 회전 각도 반영)
+  // rotationAngle만큼 회전된 좌표계에서 직교 방향으로 거리 측정
+  const cos = Math.cos(rotationAngle)
+  const sin = Math.sin(rotationAngle)
+
+  // 회전된 좌표계의 4방향 (건물의 전후좌우)
   const directions = [
-    [1, 0],   // 서쪽 (+X)
-    [-1, 0],  // 동쪽 (-X)
-    [0, 1],   // 북쪽 (+Z)
-    [0, -1],  // 남쪽 (-Z)
+    [cos, sin],    // 회전된 +X (건물 왼쪽)
+    [-cos, -sin],  // 회전된 -X (건물 오른쪽)
+    [-sin, cos],   // 회전된 +Z (건물 뒤쪽/북쪽)
+    [sin, -cos],   // 회전된 -Z (건물 앞쪽/남쪽)
   ]
 
   const distances: number[] = []
@@ -286,7 +359,7 @@ function getMaxInscribedRect(points: [number, number][]): {
     distances.push(minDist === Infinity ? 50 : minDist)
   }
 
-  // 동서남북 거리로 사각형 크기 결정
+  // 회전된 좌표계에서의 사각형 크기
   const width = Math.min(distances[0], distances[1]) * 2  // 좌우 중 작은 값 * 2
   const depth = Math.min(distances[2], distances[3]) * 2  // 상하 중 작은 값 * 2
 
@@ -346,6 +419,44 @@ function calculateBuildingDimensions(
   return { width: Math.max(5, width), depth: Math.max(5, depth) }
 }
 
+// 전면 도로(남쪽) 방향 각도 계산 - 건물을 도로와 평행하게 배치하기 위함
+function calculateFrontRoadAngle(
+  localPolygon: { points: [number, number][]; center: [number, number] }
+): number {
+  const { points, center } = localPolygon
+  if (points.length < 3) return 0
+
+  const [centerX, centerZ] = center
+
+  // 각 엣지의 중점, 각도, 길이 계산
+  const edges = points.map((p, i) => {
+    const next = points[(i + 1) % points.length]
+    const midX = (p[0] + next[0]) / 2
+    const midZ = (p[1] + next[1]) / 2
+    const dx = next[0] - p[0]
+    const dz = next[1] - p[1]
+    const angle = Math.atan2(dz, dx)  // 라디안
+    const length = Math.sqrt(dx * dx + dz * dz)
+    return { midX, midZ, angle, length }
+  })
+
+  // 남쪽 엣지들 필터링 (중점이 폴리곤 중심보다 남쪽에 있는 엣지)
+  const southEdges = edges.filter(e => e.midZ < centerZ)
+
+  if (southEdges.length === 0) {
+    // 남쪽 엣지가 없으면 가장 긴 엣지 사용
+    const longestEdge = edges.reduce((max, e) => e.length > max.length ? e : max, edges[0])
+    return -longestEdge.angle
+  }
+
+  // 남쪽 엣지 중 가장 긴 것 선택 (전면 도로에 접한 엣지)
+  const frontEdge = southEdges.reduce((max, e) => e.length > max.length ? e : max, southEdges[0])
+
+  // 건물 회전 각도: 엣지 각도의 반대 (건물이 엣지와 평행하도록)
+  // 엣지가 수평(angle=0)이면 회전 없음, 기울어지면 그만큼 회전
+  return -frontEdge.angle
+}
+
 // 층별 색상 정의
 const FLOOR_COLORS = {
   commercial: '#6b7280',  // 1층 상가 - 회색
@@ -380,19 +491,36 @@ function BuildingMass({ building, landDimensions, landPolygon, floorSetbacks, us
     right: building.setbacks.right,
   }), [building.setbacks, baseBackSetback])
 
-  // 폴리곤 좌표를 로컬 좌표로 변환 후 방향별 이격거리 적용
-  const buildableArea = useMemo(() => {
+  // 폴리곤 좌표를 로컬 좌표로 변환
+  const localPolygonData = useMemo(() => {
     if (landPolygon && landPolygon.length >= 3) {
-      const localPolygon = convertPolygonToLocal(landPolygon)
-      if (localPolygon.points.length >= 3) {
-        // 방향별 이격거리 적용된 내부 폴리곤 (북쪽은 일조권 이격)
-        const shrunkPolygon = offsetPolygonDirectional(localPolygon.points, directionalSetbacks)
-        // 최대 내접 사각형 계산
-        return getMaxInscribedRect(shrunkPolygon)
-      }
+      return convertPolygonToLocal(landPolygon)
     }
     return null
-  }, [landPolygon, directionalSetbacks])
+  }, [landPolygon])
+
+  // 건물 회전 각도 계산 (전면 도로와 평행하게 배치)
+  const buildingRotation = useMemo(() => {
+    if (localPolygonData && localPolygonData.points.length >= 3) {
+      const angle = calculateFrontRoadAngle(localPolygonData)
+      console.log('[BuildingMass] 건물 회전 각도:', (angle * 180 / Math.PI).toFixed(1), '도')
+      return angle
+    }
+    return 0
+  }, [localPolygonData])
+
+  // 폴리곤 좌표를 로컬 좌표로 변환 후 방향별 이격거리 적용
+  const buildableArea = useMemo(() => {
+    if (localPolygonData && localPolygonData.points.length >= 3) {
+      // 방향별 이격거리 적용된 내부 폴리곤 - 회전 각도 기준으로 방향 결정
+      const shrunkPolygon = offsetPolygonDirectional(localPolygonData.points, directionalSetbacks, buildingRotation)
+      // 최대 내접 사각형 계산 - 건물 회전 각도 반영
+      const rect = getMaxInscribedRect(shrunkPolygon, buildingRotation)
+      console.log('[BuildingMass] 내접 사각형:', rect.width.toFixed(1), 'x', rect.depth.toFixed(1), 'm, 중심:', rect.centerX.toFixed(1), rect.centerZ.toFixed(1))
+      return rect
+    }
+    return null
+  }, [localPolygonData, directionalSetbacks, buildingRotation])
 
   // 건물 가용 영역 계산 (폴리곤 기반 또는 bounding box 기반)
   const availableWidth = buildableArea
@@ -404,13 +532,16 @@ function BuildingMass({ building, landDimensions, landPolygon, floorSetbacks, us
   const rawBuildingArea = availableWidth * availableDepth
 
   // 건물 크기를 실제 buildingArea에 맞게 조정 (법정 한도 반영)
-  // buildingArea가 rawBuildingArea보다 작으면 비율에 맞게 축소
-  const areaRatio = building.buildingArea > 0 && rawBuildingArea > 0
+  // 중요: areaRatio는 최대 1.0으로 제한 (이격거리 영역을 벗어나지 않도록)
+  const rawAreaRatio = building.buildingArea > 0 && rawBuildingArea > 0
     ? Math.sqrt(building.buildingArea / rawBuildingArea)
     : 1
+  const areaRatio = Math.min(rawAreaRatio, 1.0)  // 최대 1.0으로 제한
 
-  // 건물 너비/깊이에 비율 적용
+  // 건물 너비/깊이에 비율 적용 (이격거리 영역 내에서만)
   const buildingWidth = Math.max(3, availableWidth * areaRatio)
+
+  console.log('[BuildingMass] 면적비율:', rawAreaRatio.toFixed(2), '→', areaRatio.toFixed(2), '(제한됨:', rawAreaRatio > 1, ')')
 
   // 건물 높이 계산
   const buildingHeight = building.floors * building.floorHeight
@@ -455,15 +586,17 @@ function BuildingMass({ building, landDimensions, landPolygon, floorSetbacks, us
           ? (backSetback - baseBackSetback)
           : 0
         floorDepth = Math.max(1, (availableDepth - depthReduction) * areaRatio)
-        // 중심 위치: 축소된 만큼 남쪽(-)으로 이동
-        floorCenterZ = baseCenterZ - depthReduction / 2
+        // 중심 위치: 로컬 좌표 (group center = 0)
+        // 축소된 만큼 남쪽(-)으로 이동
+        floorCenterZ = -depthReduction / 2
       } else {
         // bounding box 기반
         const floorAvailableDepth = landDepth - building.setbacks.front - backSetback
         floorDepth = Math.max(1, floorAvailableDepth * areaRatio)
-        // 이 층의 중심 Z 위치
-        const floorStartZ = -landDepth / 2 + building.setbacks.front
-        floorCenterZ = floorStartZ + floorDepth / 2
+        // 로컬 좌표: 깊이 기준 중앙 배치
+        // 계단형일 때 상층부 축소 반영
+        const depthDiff = (availableDepth - floorAvailableDepth) / 2
+        floorCenterZ = -depthDiff
       }
 
       // 색상 및 라벨
@@ -495,8 +628,8 @@ function BuildingMass({ building, landDimensions, landPolygon, floorSetbacks, us
   }, [building, buildingWidth, floorSetbacks, landDepth, useZone, isSteppedBuilding, baseBackSetback, areaRatio, buildableArea, availableDepth, baseCenterZ])
 
   return (
-    <group position={[centerX, 0, 0]}>
-      {/* 층별 매스 (계단형) */}
+    <group position={[centerX, 0, baseCenterZ]} rotation={[0, buildingRotation, 0]}>
+      {/* 층별 매스 (계단형) - 회전된 좌표계에서 Z는 0 기준 */}
       {floors.map((floor, idx) => (
         <group key={floor.floor}>
           {/* 층 매스 */}
@@ -672,6 +805,10 @@ function RoadPolygon({
     const roadCenterX = -(road.center.lng - centerLng) * metersPerDegreeLng
     const roadCenterZ = (road.center.lat - centerLat) * metersPerDegreeLat
 
+    // 디버그: RoadPolygon의 실제 좌표
+    const maxZ = Math.max(...localPoints.map(p => p[1]))
+    console.log(`[RoadPolygon] ${road.direction}: maxZ=${maxZ.toFixed(1)}m, center=(${roadCenterX.toFixed(1)}, ${roadCenterZ.toFixed(1)})`)
+
     // 방향 라벨
     const dirLabel = road.direction === 'north' ? '북측 도로' :
                      road.direction === 'south' ? '남측 도로' :
@@ -767,6 +904,12 @@ function AdjacentParcelPolygon({
 
     // 지목 라벨 (지번에서 숫자 제거)
     const label = parcel.jimok || ''
+
+    // 디버그: 필지 위치와 지목
+    const maxZ = Math.max(...localPoints.map(p => p[1]))
+    if (maxZ > 0) {  // 북쪽에 있는 필지만 출력
+      console.log(`[AdjacentParcel] 북쪽 필지: jimok=${parcel.jimok}, maxZ=${maxZ.toFixed(1)}m, dir=${parcel.direction}`)
+    }
 
     return {
       parcelShape: shape,
@@ -867,13 +1010,22 @@ function LandBoundary({
     return null
   }, [landPolygon])
 
-  // 방향별 이격거리 적용된 내부 폴리곤 (북쪽은 일조권 이격)
+  // 건물 회전 각도 계산 (전면 도로와 평행하게 배치)
+  const buildingRotationAngle = useMemo(() => {
+    if (localPolygon && localPolygon.points.length >= 3) {
+      return calculateFrontRoadAngle(localPolygon)
+    }
+    return 0
+  }, [localPolygon])
+
+  // 방향별 이격거리 적용된 내부 폴리곤 - 회전 각도 기준으로 방향 결정
   const offsetPolygonPoints = useMemo(() => {
     if (localPolygon && localPolygon.points.length >= 3) {
-      return offsetPolygonDirectional(localPolygon.points, displaySetbacks)
+      console.log('[Land3DView] 이격거리 적용:', displaySetbacks, '회전:', (buildingRotationAngle * 180 / Math.PI).toFixed(1) + '도')
+      return offsetPolygonDirectional(localPolygon.points, displaySetbacks, buildingRotationAngle)
     }
     return null
-  }, [localPolygon, displaySetbacks])
+  }, [localPolygon, displaySetbacks, buildingRotationAngle])
 
   // 폴리곤 Shape 생성 (Three.js용)
   // 주의: Shape는 XY 평면에서 생성 후 -90도 회전하여 XZ 평면에 배치
@@ -1572,29 +1724,31 @@ function CompassIndicator({ distance, landDepth }: { distance: number; landDepth
 }
 
 // 북쪽 일조권 사선 제한 시각화 (건축법 시행령 제86조)
+// 폴리곤 기반 3D Envelope - 실제 필지 형상 반영
 //
 // 법 조문:
 // 1. 높이 10미터 이하인 부분: 인접 대지경계선으로부터 1.5미터 이상
 // 2. 높이 10미터를 초과하는 부분: 인접 대지경계선으로부터 해당 건축물 각 부분 높이의 2분의 1 이상
-//
-// 시각화:
-// - 0~10m: 1.5m 이격 수직벽
-// - 10m 높이에서: 5m 이격 (10÷2=5)
-// - 10m~maxHeight: 사선 (높이의 1/2 이격)
-// - 사선 비율: 1:2 (수평:수직)
 function NorthSetbackEnvelope({
   landDimensions,
+  landPolygon,
+  landCenter,
   maxHeight,
   useZone,
   buildingHeight,
+  adjacentRoads,
+  adjacentParcels,
 }: {
   landDimensions: { width: number; depth: number }
+  landPolygon?: [number, number][]  // [lng, lat][] 실제 필지 폴리곤
+  landCenter?: [number, number]  // [lng, lat] 필지 중심점 (RoadPolygon과 동일한 기준)
   maxHeight: number
   useZone?: string
   buildingHeight?: number
+  adjacentRoads?: AdjacentRoad[]  // 인접 도로 정보
+  adjacentParcels?: AdjacentParcel[]  // 인접 필지 정보
 }) {
   const { width, depth } = landDimensions
-  const northBoundary = depth / 2 // 북쪽 대지경계선 (양의 Z방향)
 
   // 일조권 적용 대상: 전용주거지역, 일반주거지역만
   if (useZone) {
@@ -1604,59 +1758,251 @@ function NorthSetbackEnvelope({
     }
   }
 
+  // 북쪽에 도로만 있는지 확인 (geometry 기반 + direction 기반)
+  // landPolygon 중심 위도 계산
+  const parcelCenterLat = landPolygon && landPolygon.length > 0
+    ? landPolygon.reduce((sum, p) => sum + p[1], 0) / landPolygon.length
+    : 0
+
+  const hasNorthRoad = adjacentRoads?.some(road => {
+    if (road.direction === 'north') return true
+    // geometry 기반: 도로 중심이 필지 중심보다 북쪽이면 북쪽 도로
+    const roadCenterLat = road.geometry.reduce((sum, p) => sum + p[1], 0) / road.geometry.length
+    return roadCenterLat > parcelCenterLat
+  })
+
+  const hasNorthParcel = adjacentParcels?.some(parcel => {
+    if (parcel.jimok === '도') return false // 도로 지목 제외
+    if (parcel.direction === 'north') return true
+    // geometry 기반: 필지 중심이 우리 필지 중심보다 북쪽이면 북쪽 대지
+    const pCenterLat = parcel.geometry.reduce((sum, p) => sum + p[1], 0) / parcel.geometry.length
+    return pCenterLat > parcelCenterLat
+  })
+
+  // 북쪽에 대지가 전혀 없고 도로만 있으면 일조권 미적용
+  if (hasNorthRoad && !hasNorthParcel) {
+    return null
+  }
+
   // 실제 건물 높이에서 필요한 이격거리
   const actualBuildingSetback = buildingHeight ? getNorthSetbackAtHeight(buildingHeight) : 0
-
-  // 10m 높이에서의 이격거리: 10/2 = 5m
   const setbackAt10m = 5
-  // 최대 높이에서의 이격거리: maxHeight/2
   const maxSetback = getNorthSetbackAtHeight(maxHeight)
 
-  // 한계선 평면 생성
+  // 폴리곤을 로컬 좌표로 변환하고 북쪽 경계 추출 (도로 인접 부분 제외)
+  const { northEdges, localPoints, center } = useMemo(() => {
+    if (!landPolygon || landPolygon.length < 3) {
+      // 폴리곤 없으면 직사각형 fallback
+      const halfW = width / 2
+      const halfD = depth / 2
+      return {
+        northEdges: [[[-halfW, halfD], [halfW, halfD]] as [[number, number], [number, number]]],
+        localPoints: [[-halfW, -halfD], [halfW, -halfD], [halfW, halfD], [-halfW, halfD]] as [number, number][],
+        center: [0, 0] as [number, number]
+      }
+    }
+
+    // WGS84 → 로컬 미터 변환 (landCenter가 있으면 사용, RoadPolygon과 동일한 기준점)
+    const lngs = landPolygon.map(p => p[0])
+    const lats = landPolygon.map(p => p[1])
+    const centerLng = landCenter ? landCenter[0] : (Math.min(...lngs) + Math.max(...lngs)) / 2
+    const centerLat = landCenter ? landCenter[1] : (Math.min(...lats) + Math.max(...lats)) / 2
+    const metersPerLng = 111320 * Math.cos(centerLat * Math.PI / 180)
+    const metersPerLat = 111320
+
+    console.log('[일조권] 중심점:', landCenter ? 'landCenter 사용' : 'bbox 중심', `(${centerLng.toFixed(6)}, ${centerLat.toFixed(6)})`)
+
+    const localPts = landPolygon.map(([lng, lat]) => [
+      -(lng - centerLng) * metersPerLng,  // X축 반전
+      (lat - centerLat) * metersPerLat
+    ] as [number, number])
+
+    // 폴리곤 중심 계산
+    const cx = localPts.reduce((s, p) => s + p[0], 0) / localPts.length
+    const cz = localPts.reduce((s, p) => s + p[1], 0) / localPts.length
+
+    // 북쪽에 있는 인접 필지(대지)의 로컬 폴리곤 좌표 계산 (지목='도' 제외)
+    const allParcelPolygons = (adjacentParcels || [])
+      .filter(parcel => parcel.jimok !== '도')  // 도로 지목 제외
+      .map(parcel => {
+        const polygon = parcel.geometry.map(([lng, lat]) => [
+          -(lng - centerLng) * metersPerLng,
+          (lat - centerLat) * metersPerLat
+        ] as [number, number])
+        const maxZ = Math.max(...polygon.map(p => p[1]))
+        const minZ = Math.min(...polygon.map(p => p[1]))
+        return { polygon, maxZ, minZ, jimok: parcel.jimok }
+      })
+
+    // 북쪽에 있는 필지만 필터링 (maxZ > 0 = 필지 중심보다 북쪽)
+    const northParcelPolygons = allParcelPolygons.filter(p => p.maxZ > 0)
+
+    console.log('[일조권] 인접 필지(대지):', allParcelPolygons.length, '개, 북쪽:', northParcelPolygons.length, '개')
+
+    // 점과 폴리곤 사이의 최소 거리 계산 함수
+    const distanceToPolygon = (px: number, pz: number, polygon: [number, number][]) => {
+      let minDist = Infinity
+      for (let i = 0; i < polygon.length; i++) {
+        const [x1, z1] = polygon[i]
+        const [x2, z2] = polygon[(i + 1) % polygon.length]
+        // 선분과 점 사이의 거리
+        const dx = x2 - x1
+        const dz = z2 - z1
+        const len2 = dx * dx + dz * dz
+        if (len2 === 0) {
+          minDist = Math.min(minDist, Math.sqrt((px - x1) ** 2 + (pz - z1) ** 2))
+        } else {
+          const t = Math.max(0, Math.min(1, ((px - x1) * dx + (pz - z1) * dz) / len2))
+          const projX = x1 + t * dx
+          const projZ = z1 + t * dz
+          minDist = Math.min(minDist, Math.sqrt((px - projX) ** 2 + (pz - projZ) ** 2))
+        }
+      }
+      return minDist
+    }
+
+    // 북쪽을 향하는 edge 추출 (도로 인접 부분 제외)
+    const edges: [[number, number], [number, number]][] = []
+
+    for (let i = 0; i < localPts.length; i++) {
+      const p1 = localPts[i]
+      const p2 = localPts[(i + 1) % localPts.length]
+
+      // edge 중점
+      const midX = (p1[0] + p2[0]) / 2
+      const midZ = (p1[1] + p2[1]) / 2
+
+      // edge가 폴리곤 중심보다 북쪽(+Z)에 있으면 북쪽 경계 후보
+      if (midZ > cz) {
+        // edge 법선 방향 확인 (반시계 방향 폴리곤 가정)
+        const dx = p2[0] - p1[0]
+        const normalZ = -dx  // 반시계 방향 폴리곤의 외부 법선 Z 성분
+
+        // 법선이 +Z 방향이면 북쪽 경계
+        if (normalZ > 0 || midZ > cz + 1) {
+          // edge 중점에서 북쪽(+Z) 방향으로 5m 지점 확인
+          // 그 지점이 인접 필지 안에 있거나 가까우면 → 인접 대지 경계
+          // 멀면 → 도로 경계 (모델링 안된 부분)
+          const checkPointZ = midZ + 5  // 북쪽으로 5m
+          const checkPointX = midX
+
+          let minDistToParcel = Infinity
+
+          for (const { polygon: parcelPoly } of northParcelPolygons) {
+            // 북쪽 체크 포인트에서 필지까지의 거리
+            const dist = distanceToPolygon(checkPointX, checkPointZ, parcelPoly)
+            minDistToParcel = Math.min(minDistToParcel, dist)
+          }
+
+          // 북쪽 5m 지점에서 인접 필지까지 5m 이내면 인접 대지 → 일조권 적용
+          // (총 10m 이내에 필지가 있음)
+          // 5m 초과면 도로로 간주 → 일조권 제외
+          const isAdjacentToParcel = minDistToParcel < 5
+          const isRoad = !isAdjacentToParcel
+
+          console.log(`[일조권] Edge ${i}: midZ=${midZ.toFixed(1)}, 북쪽체크점(${checkPointX.toFixed(1)}, ${checkPointZ.toFixed(1)}), 인접필지거리=${minDistToParcel.toFixed(1)}m, 대지인접=${isAdjacentToParcel}, 도로=${isRoad}`)
+
+          // 인접 대지인 경우만 일조권 적용 (도로면 제외)
+          if (isAdjacentToParcel) {
+            edges.push([p1, p2])
+          }
+        }
+      }
+    }
+
+    return { northEdges: edges.length > 0 ? edges : [], localPoints: localPts, center: [cx, cz] as [number, number] }
+  }, [landPolygon, landCenter, width, depth, adjacentRoads, adjacentParcels])
+
+  // 3D envelope 생성 - 경계선 형태 유지, 정북방향(-Z) 이격
+  // 경계선이 대각선이면 엔벨로프도 대각선 형태
   const envelopeGeometry = useMemo(() => {
-    // 좌표 계산
-    const z_1_5m = northBoundary - 1.5        // 0~10m: 1.5m 이격 위치
-    const z_at_10m = northBoundary - setbackAt10m  // 10m 높이: 5m 이격
-    const z_at_max = northBoundary - maxSetback    // 최대높이: H/2 이격
+    const allVertices: number[] = []
 
-    const vertices = new Float32Array([
-      // 수직 부분 (0m ~ 10m) - 1.5m 이격 벽
-      // 삼각형 1
-      -width / 2, 0, z_1_5m,
-      width / 2, 0, z_1_5m,
-      -width / 2, 10, z_1_5m,
-      // 삼각형 2
-      width / 2, 0, z_1_5m,
-      width / 2, 10, z_1_5m,
-      -width / 2, 10, z_1_5m,
+    for (const [p1, p2] of northEdges) {
+      // 정북방향 이격: 각 점에서 -Z 방향으로 이격
+      // 경계선 형태는 유지하면서 이격 방향만 정북
 
-      // 10m 높이에서 수평 연결 부분 (1.5m → 5m 이격)
-      // 삼각형 1
-      -width / 2, 10, z_1_5m,
-      width / 2, 10, z_1_5m,
-      -width / 2, 10, z_at_10m,
-      // 삼각형 2
-      width / 2, 10, z_1_5m,
-      width / 2, 10, z_at_10m,
-      -width / 2, 10, z_at_10m,
+      // 수직 부분 (0~10m) - 1.5m 이격
+      const p1_0 = [p1[0], 0, p1[1] - 1.5]
+      const p2_0 = [p2[0], 0, p2[1] - 1.5]
+      const p1_10 = [p1[0], 10, p1[1] - 1.5]
+      const p2_10 = [p2[0], 10, p2[1] - 1.5]
 
-      // 사선 부분 (10m ~ maxHeight) - 높이의 1/2 이격
-      // 삼각형 1
-      -width / 2, 10, z_at_10m,
-      width / 2, 10, z_at_10m,
-      -width / 2, maxHeight, z_at_max,
-      // 삼각형 2
-      width / 2, 10, z_at_10m,
-      width / 2, maxHeight, z_at_max,
-      -width / 2, maxHeight, z_at_max,
-    ])
+      // 10m에서 5m 이격
+      const p1_10_5 = [p1[0], 10, p1[1] - setbackAt10m]
+      const p2_10_5 = [p2[0], 10, p2[1] - setbackAt10m]
+
+      // maxHeight에서 H/2 이격
+      const p1_max = [p1[0], maxHeight, p1[1] - maxSetback]
+      const p2_max = [p2[0], maxHeight, p2[1] - maxSetback]
+
+      // 수직 벽 (0~10m)
+      allVertices.push(
+        ...p1_0, ...p2_0, ...p1_10,
+        ...p2_0, ...p2_10, ...p1_10
+      )
+
+      // 10m 수평 연결 (1.5m → 5m)
+      allVertices.push(
+        ...p1_10, ...p2_10, ...p1_10_5,
+        ...p2_10, ...p2_10_5, ...p1_10_5
+      )
+
+      // 사선 부분 (10m → maxHeight)
+      allVertices.push(
+        ...p1_10_5, ...p2_10_5, ...p1_max,
+        ...p2_10_5, ...p2_max, ...p1_max
+      )
+    }
 
     const geometry = new THREE.BufferGeometry()
-    geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3))
+    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(allVertices), 3))
     geometry.computeVertexNormals()
-
     return geometry
-  }, [width, northBoundary, maxHeight, maxSetback, setbackAt10m])
+  }, [northEdges, maxHeight, maxSetback, setbackAt10m])
+
+  // 북쪽 경계선 points (라인 표시용) - 경계선 형태 유지
+  const northBoundaryLines = useMemo(() => {
+    const lines: [number, number, number][][] = []
+
+    for (const [p1, p2] of northEdges) {
+      // 각 edge 끝점에서 한계선
+      lines.push([
+        [p1[0], 0, p1[1] - 1.5],
+        [p1[0], 10, p1[1] - 1.5],
+        [p1[0], 10, p1[1] - setbackAt10m],
+        [p1[0], maxHeight, p1[1] - maxSetback],
+      ])
+
+      lines.push([
+        [p2[0], 0, p2[1] - 1.5],
+        [p2[0], 10, p2[1] - 1.5],
+        [p2[0], 10, p2[1] - setbackAt10m],
+        [p2[0], maxHeight, p2[1] - maxSetback],
+      ])
+    }
+
+    return lines
+  }, [northEdges, maxHeight, maxSetback, setbackAt10m])
+
+  // 북쪽 경계의 대표 중점 (라벨 표시용)
+  const northCenter = useMemo(() => {
+    if (northEdges.length === 0) return { x: 0, z: depth / 2 }
+    const allX = northEdges.flatMap(([p1, p2]) => [p1[0], p2[0]])
+    const allZ = northEdges.flatMap(([p1, p2]) => [p1[1], p2[1]])
+    return {
+      x: (Math.min(...allX) + Math.max(...allX)) / 2,
+      z: (Math.min(...allZ) + Math.max(...allZ)) / 2
+    }
+  }, [northEdges, depth])
+
+  // 북쪽 경계 기준점 (fallback용)
+  const northBoundary = depth / 2
+
+  // 대지 인접 북쪽 경계가 없으면 렌더링하지 않음
+  if (northEdges.length === 0) {
+    return null
+  }
 
   return (
     <group>
@@ -1670,124 +2016,34 @@ function NorthSetbackEnvelope({
         />
       </mesh>
 
-      {/* === 건물 한계선 (실선) === */}
-      {/* 좌측: 0m→10m(수직 1.5m) → 10m에서 연결 → 10m(5m이격) → maxHeight(사선) */}
-      <Line
-        points={[
-          [-width / 2, 0, northBoundary - 1.5],
-          [-width / 2, 10, northBoundary - 1.5],
-          [-width / 2, 10, northBoundary - setbackAt10m],  // 10m에서 1.5m→5m 연결
-          [-width / 2, maxHeight, northBoundary - maxSetback],
-        ]}
-        color="#ff0000"
-        lineWidth={4}
-      />
+      {/* === 폴리곤 기반 건물 한계선 (실선) === */}
+      {northBoundaryLines.map((linePoints, idx) => (
+        <Line
+          key={`limit-${idx}`}
+          points={linePoints}
+          color="#ff0000"
+          lineWidth={4}
+        />
+      ))}
 
-      {/* 우측 한계선 */}
-      <Line
-        points={[
-          [width / 2, 0, northBoundary - 1.5],
-          [width / 2, 10, northBoundary - 1.5],
-          [width / 2, 10, northBoundary - setbackAt10m],  // 10m에서 1.5m→5m 연결
-          [width / 2, maxHeight, northBoundary - maxSetback],
-        ]}
-        color="#ff0000"
-        lineWidth={4}
-      />
-
-      {/* 상단 한계선 */}
-      <Line
-        points={[
-          [-width / 2, maxHeight, northBoundary - maxSetback],
-          [width / 2, maxHeight, northBoundary - maxSetback],
-        ]}
-        color="#ff0000"
-        lineWidth={3}
-      />
-
-      {/* 지면 한계선 (1.5m 이격) */}
-      <Line
-        points={[
-          [-width / 2, 0.05, northBoundary - 1.5],
-          [width / 2, 0.05, northBoundary - 1.5],
-        ]}
-        color="#ff0000"
-        lineWidth={3}
-      />
-
-      {/* 10m 높이에서의 연결선 (1.5m → 5m 이격) */}
-      <Line
-        points={[
-          [-width / 2, 10, northBoundary - 1.5],
-          [width / 2, 10, northBoundary - 1.5],
-        ]}
-        color="#ff0000"
-        lineWidth={3}
-      />
-      <Line
-        points={[
-          [-width / 2, 10, northBoundary - 1.5],
-          [-width / 2, 10, northBoundary - setbackAt10m],
-        ]}
-        color="#ff0000"
-        lineWidth={3}
-      />
-      <Line
-        points={[
-          [width / 2, 10, northBoundary - 1.5],
-          [width / 2, 10, northBoundary - setbackAt10m],
-        ]}
-        color="#ff0000"
-        lineWidth={3}
-      />
-      <Line
-        points={[
-          [-width / 2, 10, northBoundary - setbackAt10m],
-          [width / 2, 10, northBoundary - setbackAt10m],
-        ]}
-        color="#ff0000"
-        lineWidth={3}
-      />
-
-      {/* === 사선 참고선 (점선) - 경계선에서 시작 === */}
-      <Line
-        points={[
-          [-width / 2 - 1, 0, northBoundary],
-          [-width / 2 - 1, maxHeight, northBoundary - maxSetback],
-        ]}
-        color="#ff6666"
-        lineWidth={2}
-        dashed
-        dashSize={0.8}
-        gapSize={0.4}
-      />
-      <Line
-        points={[
-          [width / 2 + 1, 0, northBoundary],
-          [width / 2 + 1, maxHeight, northBoundary - maxSetback],
-        ]}
-        color="#ff6666"
-        lineWidth={2}
-        dashed
-        dashSize={0.8}
-        gapSize={0.4}
-      />
-
-      {/* === 정북 대지경계선 === */}
-      <Line
-        points={[
-          [-width / 2 - 3, 0.1, northBoundary],
-          [width / 2 + 3, 0.1, northBoundary],
-        ]}
-        color="#ff0000"
-        lineWidth={4}
-      />
+      {/* === 정북 대지경계선 (폴리곤 형태 유지) === */}
+      {northEdges.map(([p1, p2], idx) => (
+        <Line
+          key={`boundary-${idx}`}
+          points={[
+            [p1[0], 0.1, p1[1]],
+            [p2[0], 0.1, p2[1]],
+          ]}
+          color="#ff0000"
+          lineWidth={4}
+        />
+      ))}
 
       {/* 경계선에서 수직 기준선 */}
       <Line
         points={[
-          [width / 2 + 2, 0, northBoundary],
-          [width / 2 + 2, maxHeight, northBoundary],
+          [northCenter.x + width / 2 + 2, 0, northCenter.z],
+          [northCenter.x + width / 2 + 2, maxHeight, northCenter.z],
         ]}
         color="#ff0000"
         lineWidth={2}
@@ -1797,23 +2053,26 @@ function NorthSetbackEnvelope({
       />
 
       {/* === 높이 기준선들 === */}
-      {/* 10m 높이선 */}
-      <Line
-        points={[
-          [-width / 2 - 2, 10, northBoundary],
-          [width / 2 + 3, 10, northBoundary],
-        ]}
-        color="#ffaa00"
-        lineWidth={2}
-        dashed
-        dashSize={1}
-        gapSize={0.5}
-      />
+      {/* 10m 높이선 (폴리곤 형태 유지) */}
+      {northEdges.map(([p1, p2], idx) => (
+        <Line
+          key={`h10-${idx}`}
+          points={[
+            [p1[0], 10, p1[1]],
+            [p2[0], 10, p2[1]],
+          ]}
+          color="#ffaa00"
+          lineWidth={2}
+          dashed
+          dashSize={1}
+          gapSize={0.5}
+        />
+      ))}
 
       {/* === 라벨들 === */}
       {/* 정북 경계선 라벨 */}
       <Text
-        position={[width / 2 + 4, 1, northBoundary]}
+        position={[northCenter.x + width / 2 + 4, 1, northCenter.z]}
         fontSize={1}
         color="#ff0000"
         anchorX="left"
@@ -1825,7 +2084,7 @@ function NorthSetbackEnvelope({
 
       {/* 10m 라벨 */}
       <Text
-        position={[width / 2 + 4, 10, northBoundary]}
+        position={[northCenter.x + width / 2 + 4, 10, northCenter.z]}
         fontSize={0.9}
         color="#ffaa00"
         anchorX="left"
@@ -1837,7 +2096,7 @@ function NorthSetbackEnvelope({
 
       {/* 1.5m 이격 라벨 (0~10m 구간) */}
       <Text
-        position={[0, 5, northBoundary - 0.75]}
+        position={[northCenter.x, 5, northCenter.z - 0.75]}
         fontSize={0.8}
         color="#ff6666"
         anchorX="center"
@@ -1850,7 +2109,7 @@ function NorthSetbackEnvelope({
 
       {/* 5m 이격 라벨 (10m 높이) */}
       <Text
-        position={[0, 10.5, northBoundary - 2.5]}
+        position={[northCenter.x, 10.5, northCenter.z - 2.5]}
         fontSize={0.8}
         color="#ff6666"
         anchorX="center"
@@ -1863,7 +2122,7 @@ function NorthSetbackEnvelope({
 
       {/* 사선 비율 라벨 */}
       <Text
-        position={[width / 2 + 3, (10 + maxHeight) / 2, (northBoundary - setbackAt10m + northBoundary - maxSetback) / 2]}
+        position={[northCenter.x + width / 2 + 3, (10 + maxHeight) / 2, northCenter.z - (setbackAt10m + maxSetback) / 2]}
         fontSize={0.8}
         color="#ff6666"
         anchorX="left"
@@ -1876,7 +2135,7 @@ function NorthSetbackEnvelope({
       {/* 실제 건물 높이에서의 이격거리 라벨 */}
       {buildingHeight && buildingHeight > 10 && (
         <Text
-          position={[0, buildingHeight + 0.5, northBoundary - actualBuildingSetback / 2]}
+          position={[northCenter.x, buildingHeight + 0.5, northCenter.z - actualBuildingSetback / 2]}
           fontSize={0.7}
           color="#00ff00"
           anchorX="center"
@@ -2077,12 +2336,19 @@ export function MassViewer3D({ building, landArea, landDimensions: propLandDimen
         />
 
         {/* 북쪽 일조권 사선 제한 (평면뷰에서는 숨김) */}
-        {showSunlightEnvelope && (
+        {showSunlightEnvelope && landPolygon && landPolygon.length >= 3 && (
           <NorthSetbackEnvelope
             landDimensions={landDimensions}
+            landPolygon={landPolygon}
+            landCenter={[
+              landPolygon.reduce((s, p) => s + p[0], 0) / landPolygon.length,
+              landPolygon.reduce((s, p) => s + p[1], 0) / landPolygon.length
+            ]}
             maxHeight={Math.max(buildingHeight + 3, buildingHeight * 1.1)}
             useZone={useZone}
             buildingHeight={buildingHeight}
+            adjacentRoads={adjacentRoads}
+            adjacentParcels={adjacentParcels}
           />
         )}
 
