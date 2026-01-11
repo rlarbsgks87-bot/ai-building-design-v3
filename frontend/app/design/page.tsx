@@ -359,7 +359,7 @@ function DesignPageContent() {
     return { width: side, depth: side }
   }, [landInfo.area])
 
-  // 층별 면적 계산 (계단형 매스)
+  // 층별 면적 계산 (박스형 우선, 불가시 계단형)
   const calculateSteppedFloorAreas = useCallback((
     floors: number,
     floorHeight: number,
@@ -373,29 +373,56 @@ function DesignPageContent() {
     // 가용 너비 (좌우 이격 적용)
     const availableWidth = landDimensions.width - baseSetbacks.left - baseSetbacks.right
 
-    for (let floor = 1; floor <= floors; floor++) {
-      const floorTopHeight = floor * floorHeight
+    // 1단계: 최대 높이에서 필요한 이격거리 계산 (박스형 기준)
+    const maxHeight = floors * floorHeight
+    const maxRequiredSetback = isResidential
+      ? Math.max(calculateNorthSetback(maxHeight, useZone), MIN_SETBACKS.back)
+      : baseSetbacks.back
 
-      // 해당 층 상단 높이에서 필요한 북측 이격거리
-      let requiredBackSetback = baseSetbacks.back
-      if (isResidential) {
-        requiredBackSetback = Math.max(
-          calculateNorthSetback(floorTopHeight, useZone),
-          MIN_SETBACKS.back
-        )
+    // 박스형 가용 깊이 (최대 이격거리 적용)
+    const boxAvailableDepth = landDimensions.depth - baseSetbacks.front - maxRequiredSetback
+    const boxFloorArea = availableWidth * boxAvailableDepth
+
+    // 2단계: 박스형 가능 여부 판단 (최소 면적 확보 가능한지)
+    const MIN_FLOOR_AREA = 20  // 최소 20㎡ 이상이어야 건축 가능
+    const canUseBoxShape = boxFloorArea >= MIN_FLOOR_AREA
+
+    console.log(`[층별면적] 박스형 검토: 최대이격=${maxRequiredSetback.toFixed(1)}m, 가용깊이=${boxAvailableDepth.toFixed(1)}m, 면적=${boxFloorArea.toFixed(1)}㎡, 박스가능=${canUseBoxShape}`)
+
+    if (canUseBoxShape) {
+      // 박스형: 전층 동일 이격거리
+      for (let floor = 1; floor <= floors; floor++) {
+        floorSetbacks.push(maxRequiredSetback)
+        floorAreas.push(boxFloorArea)
       }
+      console.log(`[층별면적] 박스형 적용: 전층 ${maxRequiredSetback.toFixed(1)}m 이격`)
+    } else {
+      // 계단형: 층별 다른 이격거리 (차선책)
+      console.log(`[층별면적] 계단형 적용 (박스형 불가)`)
+      for (let floor = 1; floor <= floors; floor++) {
+        const floorTopHeight = floor * floorHeight
 
-      floorSetbacks.push(requiredBackSetback)
+        // 해당 층 상단 높이에서 필요한 북측 이격거리
+        let requiredBackSetback = baseSetbacks.back
+        if (isResidential) {
+          requiredBackSetback = Math.max(
+            calculateNorthSetback(floorTopHeight, useZone),
+            MIN_SETBACKS.back
+          )
+        }
 
-      // 해당 층의 가용 깊이
-      const availableDepth = landDimensions.depth - baseSetbacks.front - requiredBackSetback
+        floorSetbacks.push(requiredBackSetback)
 
-      // 면적 계산 (음수 방지)
-      const floorArea = Math.max(0, availableWidth * availableDepth)
-      floorAreas.push(floorArea)
+        // 해당 층의 가용 깊이
+        const availableDepth = landDimensions.depth - baseSetbacks.front - requiredBackSetback
+
+        // 면적 계산 (음수 방지)
+        const floorArea = Math.max(0, availableWidth * availableDepth)
+        floorAreas.push(floorArea)
+      }
     }
 
-    return { floorAreas, floorSetbacks }
+    return { floorAreas, floorSetbacks, isBoxShape: canUseBoxShape }
   }, [landDimensions])
 
   // 초기 층별 이격거리 계산 (currentBuilding 변경시)
